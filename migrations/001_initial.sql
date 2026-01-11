@@ -1,0 +1,90 @@
+-- initial schema for bookings bot
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  tg_id INTEGER UNIQUE,
+  name TEXT,
+  phone TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS services (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  description TEXT,
+  price REAL,
+  duration_minutes INTEGER DEFAULT 30
+);
+
+CREATE TABLE IF NOT EXISTS masters (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  bio TEXT,
+  contact TEXT
+);
+
+CREATE TABLE IF NOT EXISTS master_schedule (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  master_id INTEGER NOT NULL,
+  weekday INTEGER NOT NULL,
+  start_time TEXT NOT NULL,
+  end_time TEXT NOT NULL,
+  FOREIGN KEY(master_id) REFERENCES masters(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS time_slots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  master_id INTEGER NOT NULL,
+  date TEXT NOT NULL,
+  time TEXT NOT NULL,
+  is_taken INTEGER DEFAULT 0,
+  FOREIGN KEY(master_id) REFERENCES masters(id) ON DELETE CASCADE,
+  UNIQUE (master_id, date, time)
+);
+
+CREATE TABLE IF NOT EXISTS bookings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER,
+  service_id INTEGER,
+  master_id INTEGER,
+  date TEXT,
+  time TEXT,
+  status TEXT,
+  name TEXT,
+  phone TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(user_id) REFERENCES users(id),
+  FOREIGN KEY(service_id) REFERENCES services(id),
+  FOREIGN KEY(master_id) REFERENCES masters(id)
+);
+
+CREATE TABLE IF NOT EXISTS reviews (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER,
+  service_id INTEGER,
+  master_id INTEGER,
+  rating INTEGER,
+  text TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS manual_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER,
+  text TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  processed INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  key TEXT UNIQUE,
+  value TEXT
+);
+
+CREATE TABLE IF NOT EXISTS admins (
+  tg_id INTEGER PRIMARY KEY,
+  name TEXT
+);
