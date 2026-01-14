@@ -209,6 +209,27 @@ async def list_exceptions(master_id: int):
     await db.close()
     return rows
 
+# Manual request CRUD (for cases when no slots available)
+async def create_manual_request(user_id: int, text: str):
+    db = await get_db()
+    cur = await db.execute('INSERT INTO manual_requests (user_id, text, processed) VALUES (?,?,0)', (user_id, text))
+    await db.commit()
+    await db.close()
+    return cur.lastrowid
+
+async def list_manual_requests(limit: int = 100):
+    db = await get_db()
+    cur = await db.execute('SELECT * FROM manual_requests ORDER BY created_at DESC LIMIT ?', (limit,))
+    rows = await cur.fetchall()
+    await db.close()
+    return rows
+
+async def set_manual_request_processed(request_id: int, processed: int = 1):
+    db = await get_db()
+    await db.execute('UPDATE manual_requests SET processed=? WHERE id=?', (processed, request_id))
+    await db.commit()
+    await db.close()
+
 # Reviews CRUD and aggregation
 async def create_review(user_id: int, service_id: int = None, master_id: int = None, rating: int = 5, text: str = None):
     db = await get_db()
