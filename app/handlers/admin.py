@@ -156,6 +156,43 @@ async def cmd_list_bookings(message: Message):
         text += f"ID:{r['id']} {r['date']} {r['time']} user:{r['user_id']} service:{r['service_id']} master:{r['master_id']}\n"
     await message.answer(text)
 
+
+@router.message(Command('complete_booking'))
+async def cmd_complete_booking(message: Message):
+    """Mark a booking as completed and send a review request to the client."""
+    if not is_admin(message.from_user.id):
+        await message.answer('Доступ запрещён')
+        return
+    args = message.get_args()
+    if not args:
+        await message.answer('Использование: /complete_booking booking_id')
+        return
+    try:
+        bid = int(args.strip())
+    except Exception:
+        await message.answer('Неверный booking_id')
+        return
+    # set status to completed
+    from app.repo import set_booking_status, get_booking, get_user_by_id
+    await set_booking_status(bid, 'completed')
+    b = await get_booking(bid)
+    if not b:
+        await message.answer('Бронирование не найдено')
+        return
+    # send review prompt to the user
+    user = await get_user_by_id(b['user_id'])
+    if not user or not user['tg_id']:
+        await message.answer('Не удалось найти Telegram ID клиента')
+        return
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    rows = [[InlineKeyboardButton(text=str(i), callback_data=f'review:rating:{i}:booking:{bid}') for i in range(1,6)], [InlineKeyboardButton(text='Оставить комментарий', callback_data=f'review:text:booking:{bid}')]]
+    kb = InlineKeyboardMarkup(inline_keyboard=rows)
+    try:
+        await message.bot.send_message(user['tg_id'], 'Как прошёл визит? Оцените от 1 до 5 и, если хотите, оставьте комментарий', reply_markup=kb)
+        await message.answer('Клиенту отправлен запрос отзыва')
+    except Exception as e:
+        await message.answer('Ошибка при отправке сообщения клиенту: ' + str(e))
+
 @router.message(Command('export_bookings'))
 async def cmd_export_bookings(message: Message):
     if not is_admin(message.from_user.id):

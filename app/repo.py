@@ -190,6 +190,28 @@ async def list_bookings():
     return rows
 
 
+async def get_booking(booking_id: int):
+    db = await get_db()
+    cur = await db.execute('SELECT * FROM bookings WHERE id=?', (booking_id,))
+    row = await cur.fetchone()
+    await db.close()
+    return row
+
+
+async def set_booking_status(booking_id: int, status: str):
+    db = await get_db()
+    await db.execute('UPDATE bookings SET status=? WHERE id=?', (status, booking_id))
+    await db.commit()
+    await db.close()
+
+async def get_user_by_id(user_id: int):
+    db = await get_db()
+    cur = await db.execute('SELECT * FROM users WHERE id=?', (user_id,))
+    row = await cur.fetchone()
+    await db.close()
+    return row
+
+
 async def add_exception(master_id: int, date_s: str, available: int = 1, start_time: str = None, end_time: str = None, note: str = None):
     db = await get_db()
     # upsert
