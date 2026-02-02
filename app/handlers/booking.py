@@ -51,15 +51,16 @@ async def cb_select_service(query: CallbackQuery, state: FSMContext):
         return
     text = 'Выберите мастера или без выбора:'
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    kb = InlineKeyboardMarkup(inline_keyboard=[])
+    buttons = []
     for m in masters:
         avg, cnt = await average_rating_for_master(m['id'])
         rating = format_rating(avg, cnt)
         label = m['name']
         if rating:
             label = f"{m['name']} {rating}"
-        kb.add(InlineKeyboardButton(text=label, callback_data=f'book:master:{m["id"]}'))
-    kb.add(InlineKeyboardButton(text='Без выбора', callback_data='book:master:0'))
+        buttons.append([InlineKeyboardButton(text=label, callback_data=f'book:master:{m["id"]}')])
+    buttons.append([InlineKeyboardButton(text='Без выбора', callback_data='book:master:0')])
+    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
     await query.message.answer(text, reply_markup=kb)
     await query.answer("")
 
@@ -272,9 +273,10 @@ async def process_date(message: Message, state: FSMContext):
         await message.answer('К сожалению, у выбранного мастера нет слотов на этот день. Попробуйте другую дату или мастера.')
         return
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    kb = InlineKeyboardMarkup()
+    buttons = []
     for t in slots:
-        kb.add(InlineKeyboardButton(t, callback_data=f'book:time:{t}'))
+        buttons.append([InlineKeyboardButton(text=t, callback_data=f'book:time:{t}')])
+    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
     await message.answer('Выберите время:', reply_markup=kb)
     await _set_state(state, BookingStates.TIME)
 
@@ -324,7 +326,7 @@ async def process_phone(message: Message, state: FSMContext):
     data = await state.get_data()
     text = f"Подтвердите запись:\nУслуга ID: {data['service_id']}\nМастер ID: {data['master_id']}\nДата: {data['date']}\nВремя: {data['time']}\nИмя: {data['name']}\nТелефон: {data['phone']}"
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    kb = InlineKeyboardMarkup().add(InlineKeyboardButton(text='Подтвердить', callback_data='book:confirm'), InlineKeyboardButton(text='Отмена', callback_data='book:cancel'))
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='Подтвердить', callback_data='book:confirm'), InlineKeyboardButton(text='Отмена', callback_data='book:cancel')]])
     await message.answer(text, reply_markup=kb)
     await _set_state(state, BookingStates.CONFIRM)
 
