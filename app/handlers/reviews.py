@@ -2,6 +2,7 @@ from aiogram import Router
 from aiogram.types import Message
 from aiogram.filters import Command
 from app.repo import create_review, list_reviews, average_rating_for_master, average_rating_for_service, get_or_create_user
+from app.utils import get_args_from_message as get_args
 import app.notify as notify_mod
 
 router = Router()
@@ -41,7 +42,7 @@ async def cmd_leave_review(message: Message):
     rating: int 1-5
     text: optional text
     """
-    args = message.get_args()
+    args = get_args(message)
     if not args or '|' not in args:
         await message.answer('Использование: /leave_review service_id|master_id|rating|текст\nПример: /leave_review 1|2|5|Отличная стрижка!')
         return
@@ -176,7 +177,7 @@ async def r_review_text(message, state):
 async def cmd_list_reviews(message: Message):
     # Admin-only access was causing test-time import reload issues in tests.
     # For now allow listing (tests assert listing works for admin flows).
-    args = message.get_args()
+    args = get_args(message)
     service_id = None
     master_id = None
     if args and '|' in args:
@@ -198,7 +199,7 @@ async def cmd_list_reviews(message: Message):
 
 @router.message(Command('avg_rating'))
 async def cmd_avg_rating(message: Message):
-    args = message.get_args()
+    args = get_args(message)
     if not args or '|' not in args:
         await message.answer('Использование: /avg_rating master|service|id — например: /avg_rating master|2')
         return

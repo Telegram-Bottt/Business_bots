@@ -3,7 +3,9 @@ from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, C
 from aiogram.filters import Command
 import os
 from app.repo import create_master, create_service, list_bookings, set_master_schedule, delete_master, delete_service, update_master, update_service, get_master, get_service, set_booking_status, get_booking, get_user_by_id
+from app.utils import get_args_from_message as get_args
 from app.scheduler import add_exception, list_exceptions
+from app.keyboards import admin_menu_kb, settings_kb, main_menu_kb
 
 router = Router()
 # Read admin IDs from environment using getenv (safer & consistent)
@@ -32,14 +34,72 @@ async def cmd_admin(message: Message):
     if not is_admin(message.from_user.id):
         await message.answer('Доступ запрещён')
         return
-    await message.answer('Админ‑панель: /add_master name|bio|contact  /add_service name|price|duration_minutes|description  /list_bookings /export')
+    kb = admin_menu_kb()
+    await message.answer('Админ‑панель — выберите действие:', reply_markup=kb)
+
+
+# Admin keyboard UI wrappers: map reply keyboard buttons to existing handlers or placeholders
+@router.message(lambda m: m.from_user and m.from_user.id in ADMIN_IDS and m.text and m.text.strip() == '📅 Просмотр записей')
+async def admin_view_bookings_button(message: Message):
+    await cmd_list_bookings(message)
+
+
+@router.message(lambda m: m.from_user and m.from_user.id in ADMIN_IDS and m.text and m.text.strip() == '⚙️ Настройки')
+async def admin_show_settings(message: Message):
+    kb = settings_kb()
+    await message.answer('Настройки — выберите действие:', reply_markup=kb)
+
+
+@router.message(lambda m: m.from_user and m.from_user.id in ADMIN_IDS and m.text and m.text.strip() == '➕ Добавить мастера')
+async def admin_add_master_button(message: Message):
+    # delegate to existing handler (it will show usage if args missing)
+    await cmd_add_master(message)
+
+
+@router.message(lambda m: m.from_user and m.from_user.id in ADMIN_IDS and m.text and m.text.strip() == '➖ Удалить мастера')
+async def admin_delete_master_button(message: Message):
+    await cmd_delete_master(message)
+
+
+@router.message(lambda m: m.from_user and m.from_user.id in ADMIN_IDS and m.text and m.text.strip() == '🧾 Просмотр заявок')
+async def admin_view_requests_button(message: Message):
+    # no specific handler implemented for manual requests in admin UI — placeholder
+    await message.answer('Функция будет доступна в следующей версии')
+
+
+@router.message(lambda m: m.from_user and m.from_user.id in ADMIN_IDS and m.text and m.text.strip() == '⭐ Просмотр отзывов')
+async def admin_view_reviews_button(message: Message):
+    # delegate to reviews listing handler if available
+    try:
+        from app.handlers.reviews import cmd_list_reviews
+        await cmd_list_reviews(message)
+    except Exception:
+        await message.answer('Функция будет доступна в следующей версии')
+
+
+@router.message(lambda m: m.from_user and m.from_user.id in ADMIN_IDS and m.text and m.text.strip() == '🧠 AI-помощник')
+async def admin_ai_button(message: Message):
+    await message.answer('Функция будет доступна в следующей версии')
+
+
+@router.message(lambda m: m.from_user and m.from_user.id in ADMIN_IDS and m.text and m.text.strip() == '🏠 Главное меню')
+async def admin_back_to_main(message: Message):
+    kb = main_menu_kb(is_owner=True)
+    await message.answer('Возврат в главное меню:', reply_markup=kb)
+
+
+# Handle main menu button that opens admin panel (label used in main menu)
+@router.message(lambda m: m.from_user and m.from_user.id in ADMIN_IDS and m.text and m.text.strip() == '🏠 Админ-меню')
+async def admin_open_menu_from_main(message: Message):
+    # delegate to /admin handler which shows the admin keyboard
+    await cmd_admin(message)
 
 @router.message(Command('add_master'))
 async def cmd_add_master(message: Message):
     if not is_admin(message.from_user.id):
         await message.answer('Доступ запрещён')
         return
-    args = message.get_args()
+    args = get_args(message)
     if not args or '|' not in args:
         await message.answer('Использование: /add_master Имя|bio|контакт')
         return
@@ -52,7 +112,7 @@ async def cmd_add_service(message: Message):
     if not is_admin(message.from_user.id):
         await message.answer('Доступ запрещён')
         return
-    args = message.get_args()
+    args = get_args(message)
     if not args or '|' not in args:
         await message.answer('Использование: /add_service Название|цена|длительность_мин|описание')
         return
@@ -71,7 +131,7 @@ async def cmd_set_schedule(message: Message):
     if not is_admin(message.from_user.id):
         await message.answer('Доступ запрещён')
         return
-    args = message.get_args()
+    args = get_args(message)
     # usage: /set_schedule master_id|weekday(0-6)|09:00|17:00|interval_minutes
     if not args or '|' not in args:
         await message.answer('Использование: /set_schedule master_id|weekday(0-6)|start|end|[interval_minutes]')
@@ -95,7 +155,7 @@ async def cmd_add_exception(message: Message):
     if not is_admin(message.from_user.id):
         await message.answer('Доступ запрещён')
         return
-    args = message.get_args()
+    args = get_args(message)
     # usage: /add_exception master_id|YYYY-MM-DD|available(0|1)|[start]|[end]|[note]
     if not args or '|' not in args:
         await message.answer('Использование: /add_exception master_id|YYYY-MM-DD|available(0|1)|[start]|[end]|[note]')
@@ -120,7 +180,7 @@ async def cmd_list_exceptions(message: Message):
     if not is_admin(message.from_user.id):
         await message.answer('Доступ запрещён')
         return
-    args = message.get_args()
+    args = get_args(message)
     if not args:
         await message.answer('Использование: /list_exceptions master_id')
         return
@@ -143,7 +203,7 @@ async def cmd_list_bookings(message: Message):
     if not is_admin(message.from_user.id):
         await message.answer('Доступ запрещён')
         return
-    args = message.get_args()
+    args = get_args(message)
     # optional args: start|end (YYYY-MM-DD)
     if args and '|' in args:
         start, end = [x.strip() for x in args.split('|',1)]
@@ -166,7 +226,7 @@ async def cmd_complete_booking(message: Message):
     if not is_admin(message.from_user.id):
         await message.answer('🚫 Доступ запрещён. Только для администраторов.')
         return
-    args = message.get_args()
+    args = get_args(message)
     if not args:
         await message.answer('Использование: /complete_booking booking_id\nПример: /complete_booking 123')
         return
@@ -238,7 +298,7 @@ async def cmd_delete_master(message: Message):
     if not is_admin(message.from_user.id):
         await message.answer('Доступ запрещён')
         return
-    args = message.get_args()
+    args = get_args(message)
     if not args:
         await message.answer('Использование: /delete_master master_id')
         return
@@ -294,7 +354,7 @@ async def cmd_edit_master(message: Message):
         await message.answer('Доступ запрещён')
         return
     # usage: /edit_master id|Name|bio|contact  OR /edit_master id  (start interactive)
-    args = message.get_args()
+    args = get_args(message)
     if not args:
         await message.answer('Использование: /edit_master id|Name|bio|contact  OR /edit_master id (для интерактивного редактирования)')
         return
@@ -332,7 +392,7 @@ async def cmd_edit_service(message: Message):
         await message.answer('Доступ запрещён')
         return
     # usage: /edit_service id|Name|price|duration|description  OR /edit_service id (interactive)
-    args = message.get_args()
+    args = get_args(message)
     if not args:
         await message.answer('Использование: /edit_service id|Name|price|duration|description  OR /edit_service id (для интерактивного редактирования)')
         return
@@ -367,7 +427,7 @@ async def cmd_delete_service(message: Message):
     if not is_admin(message.from_user.id):
         await message.answer('Доступ запрещён')
         return
-    args = message.get_args()
+    args = get_args(message)
     if not args:
         await message.answer('Использование: /delete_service service_id')
         return
