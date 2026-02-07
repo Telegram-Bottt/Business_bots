@@ -436,7 +436,7 @@ async def process_date(message: Message, state: FSMContext):
             if rating:
                 label = f"{m['name']} {rating} ({len(slots)}), выбрать"
             # fixed callback_data quoting to avoid nested single-quote syntax error
-            rows.append([InlineKeyboardButton(text=label, callback_data=f'book:master_choose:{m["id"]}')])
+            rows.append([InlineKeyboardButton(text=label, callback_data=f"book:master_choose:{m['id']}")])
         # Also show masters with zero slots as option for manual request
         all_masters = await list_masters()
         for m in all_masters:
