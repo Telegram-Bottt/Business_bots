@@ -253,9 +253,27 @@ async def cmd_list_bookings(message: Message):
     if not rows:
         await message.answer('Записей нет')
         return
+    from app.repo import get_user_by_id, get_service, get_master
     text = ''
     for r in rows[:200]:
-        text += f"ID:{r['id']} {r['date']} {r['time']} user:{r['user_id']} service:{r['service_id']} master:{r['master_id']}\n"
+        user = await get_user_by_id(r['user_id']) if r.get('user_id') else None
+        service = await get_service(r['service_id']) if r.get('service_id') else None
+        master = await get_master(r['master_id']) if r.get('master_id') else None
+        
+        user_name = user['name'] if user else "неизвестный"
+        user_phone = user['phone'] if user else ""
+        service_name = service['name'] if service else "неизвестная"
+        master_name = master['name'] if master else "без выбора"
+        
+        text += f"ID: {r['id']}\n"
+        text += f"Клиент: {user_name}\n"
+        if user_phone:
+            text += f"Телефон: {user_phone}\n"
+        text += f"Услуга: {service_name}\n"
+        text += f"Мастер: {master_name}\n"
+        text += f"Дата: {r['date']}\n"
+        text += f"Время: {r['time']}\n"
+        text += f"Статус: {r['status']}\n\n"
     await message.answer(text)
 
 

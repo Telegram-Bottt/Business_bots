@@ -207,6 +207,44 @@ async def get_user_by_id(user_id: int):
         return row
 
 
+async def format_booking_for_display(booking) -> str:
+    """Format booking record for admin display with real data instead of IDs.
+    
+    booking can be dict or sqlite3.Row with keys: user_id, service_id, master_id, date, time
+    
+    Returns formatted string like:
+    📌 Новая запись
+    Клиент: {name}
+    Телефон: {phone}
+    Услуга: {service_name}
+    Мастер: {master_name или "без выбора"}
+    Дата: {date}
+    Время: {time}
+    """
+    user_id = booking['user_id']
+    service_id = booking['service_id']
+    master_id = booking['master_id']
+    
+    user = await get_user_by_id(user_id) if user_id else None
+    service = await get_service(service_id) if service_id else None
+    master = await get_master(master_id) if master_id else None
+    
+    user_name = user['name'] if user else "неизвестный"
+    user_phone = user['phone'] if user else ""
+    service_name = service['name'] if service else "неизвестная"
+    master_name = master['name'] if master else "без выбора"
+    
+    text = "📌 Новая запись\n"
+    text += f"Клиент: {user_name}\n"
+    if user_phone:
+        text += f"Телефон: {user_phone}\n"
+    text += f"Услуга: {service_name}\n"
+    text += f"Мастер: {master_name}\n"
+    text += f"Дата: {booking['date']}\n"
+    text += f"Время: {booking['time']}"
+    return text
+
+
 async def add_exception(master_id: int, date_s: str, available: int = 1, start_time: str = None, end_time: str = None, note: str = None):
     async with get_db() as db:
         # upsert

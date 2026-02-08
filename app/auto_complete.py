@@ -94,6 +94,7 @@ async def _auto_complete(booking_id, delay):
             user['id'], booking['service_id'], booking['master_id'], 
             rating=5, text=None
         )
-        await notify_admins(
-            f"Авто-завершение и авто-отзыв: booking_id={booking_id}"
-        )
+        from app.repo import format_booking_for_display
+        formatted = await format_booking_for_display(booking)
+        msg = formatted + f"\n\n✅ Статус: Автоматически завершено и запрошен отзыв"
+        await notify_admins(msg)

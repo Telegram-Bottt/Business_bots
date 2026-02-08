@@ -272,11 +272,16 @@ async def cb_manual_confirm(query: CallbackQuery, state: FSMContext):
     user = await get_or_create_user(query.from_user.id, name=data.get('manual_name'), phone=data.get('manual_phone'))
     # construct text
     text = f"manual_request service={data.get('manual_service_id')} master={data.get('manual_master_id')} pref={data.get('manual_prefer')} name={data.get('manual_name')} phone={data.get('manual_phone')}"
-    from app.repo import create_manual_request
+    from app.repo import create_manual_request, get_service, get_master
     rid = await create_manual_request(user['id'], text)
     try:
         from app.notify import notify_admins
-        await notify_admins(f"Новая ручная заявка id={rid} {text}")
+        service = await get_service(data.get('manual_service_id')) if data.get('manual_service_id') else None
+        master = await get_master(data.get('manual_master_id')) if data.get('manual_master_id') else None
+        service_name = service['name'] if service else "неизвестная"
+        master_name = master['name'] if master else "без выбора"
+        msg = f"📌 Ручная заявка\nКлиент: {data.get('manual_name')}\nТелефон: {data.get('manual_phone')}\nУслуга: {service_name}\nМастер: {master_name}\nПожелание: {data.get('manual_prefer', 'нет')}"
+        await notify_admins(msg)
     except Exception:
         pass
     await query.message.answer('✅ Ручная заявка отправлена админам. Мы свяжемся с вами в ближайшее время! 📞')
@@ -606,7 +611,18 @@ async def cb_confirm(query: CallbackQuery, state: FSMContext):
     # notify admins
     try:
         from app.notify import notify_admins
-        await notify_admins(f"Новая запись: {data['date']} {data['time']} Услуга:{data['service_id']} Мастер:{data['master_id']} Клиент:{data['name']} {data['phone']}")
+        from app.repo import format_booking_for_display
+        # Create a minimal booking dict for formatting
+        user = await get_or_create_user(query.from_user.id, name=data.get('name'), phone=data.get('phone'))
+        booking_dict = {
+            'user_id': user['id'],
+            'service_id': data.get('service_id'),
+            'master_id': data.get('master_id'),
+            'date': data['date'],
+            'time': data['time']
+        }
+        formatted = await format_booking_for_display(booking_dict)
+        await notify_admins(formatted)
     except Exception:
         pass
     await query.message.answer('🎉 Запись подтверждена! Админ уведомлён. Ждём вас!')

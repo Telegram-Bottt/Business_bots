@@ -89,7 +89,13 @@ async def cmd_leave_review(message: Message):
     rid = await create_review(user['id'], service_id, master_id, rating, text)
     await message.answer('Спасибо за ваш отзыв! ⭐ Он поможет нам стать лучше.')
     # notify admins
-    await notify_mod.notify_admins(f"Новый отзыв: id={rid} рейтинг={rating} мастер={master_id} услуга={service_id} текст={text or ''}")
+    from app.repo import get_master, get_service
+    master = await get_master(master_id) if master_id else None
+    service = await get_service(service_id) if service_id else None
+    master_name = master['name'] if master else "неизвестный"
+    service_name = service['name'] if service else "неизвестная"
+    msg = f"⭐ Новый отзыв\nРейтинг: {rating} звёзд\nМастер: {master_name}\nУслуга: {service_name}\nКомментарий: {text or '(без текста)'}\nID отзыва: {rid}"
+    await notify_mod.notify_admins(msg)
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith('review:rating:'))
@@ -117,7 +123,13 @@ async def cb_review_rating(query, state):
         return
     rid = await create_review(user_db['id'], b['service_id'], b['master_id'], rating, None)
     try:
-        await notify_mod.notify_admins(f"Новый отзыв: id={rid} рейтинг={rating} мастер={b['master_id']} услуга={b['service_id']}")
+        from app.repo import get_master, get_service
+        master = await get_master(b['master_id']) if b['master_id'] else None
+        service = await get_service(b['service_id']) if b['service_id'] else None
+        master_name = master['name'] if master else "неизвестный"
+        service_name = service['name'] if service else "неизвестная"
+        msg = f"⭐ Новый отзыв\nРейтинг: {rating} звёзд\nМастер: {master_name}\nУслуга: {service_name}\n(по запросу)\nID отзыва: {rid}"
+        await notify_mod.notify_admins(msg)
     except Exception:
         pass
     try:

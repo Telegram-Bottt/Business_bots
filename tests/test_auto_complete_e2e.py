@@ -159,7 +159,8 @@ class TestAutoCompleteE2E:
         
         # Verify admin was notified
         assert len(notify_calls) > 0
-        assert 'booking_id=' in notify_calls[0]
+        # Check that the notification contains new format with readable data
+        assert 'Клиент:' in notify_calls[0] or 'Мастер:' in notify_calls[0]
         
         # Clean up
         cancel_auto_complete(bid)
