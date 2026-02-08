@@ -107,6 +107,7 @@ async def cb_select_service(query: CallbackQuery, state: FSMContext):
     service_id = int(query.data.split(':')[-1])
     await state.update_data(service_id=service_id)
     # record the initiator user id so we can detect mismatched interactions
+    
     try:
         await state.update_data(booking_user_id=query.from_user.id)
     except Exception:
