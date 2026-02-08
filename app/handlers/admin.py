@@ -2,11 +2,14 @@ from aiogram import Router
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.filters import Command
 import os
-from app.repo import create_master, create_service, list_bookings, set_master_schedule, delete_master, delete_service, update_master, update_service, get_master, get_service
+from app.repo import create_master, create_service, list_bookings, set_master_schedule, delete_master, delete_service, update_master, update_service, get_master, get_service, set_booking_status, get_booking, get_user_by_id
+from app.utils import get_args_from_message as get_args
 from app.scheduler import add_exception, list_exceptions
+from app.keyboards import admin_menu_kb, settings_kb, main_menu_kb
 
 router = Router()
-ADMIN_IDS = [int(x) for x in os.environ.get('ADMIN_IDS','').split(',') if x]
+# Read admin IDs from environment using getenv (safer & consistent)
+ADMIN_IDS = [int(x) for x in os.getenv('ADMIN_IDS','').split(',') if x]
 
 # Simple in-memory staging for multi-step admin dialogs (per admin user)
 STAGED_EDITS = {}
@@ -31,14 +34,109 @@ async def cmd_admin(message: Message):
     if not is_admin(message.from_user.id):
         await message.answer('Доступ запрещён')
         return
-    await message.answer('Админ‑панель: /add_master name|bio|contact  /add_service name|price|duration_minutes|description  /list_bookings /export')
+    kb = admin_menu_kb()
+    await message.answer('Админ‑панель — выберите действие:', reply_markup=kb)
 
+
+# Admin keyboard UI wrappers: map reply keyboard buttons to existing handlers or placeholders
+@router.message(lambda m: m.from_user and m.from_user.id in ADMIN_IDS and m.text and m.text.strip() == '📅 Просмотр записей')
+async def admin_view_bookings_button(message: Message):
+    await cmd_list_bookings(message)
+
+
+@router.message(lambda m: m.from_user and m.from_user.id in ADMIN_IDS and m.text and m.text.strip() == '⚙️ Настройки')
+async def admin_show_settings(message: Message):
+    kb = settings_kb()
+    await message.answer('Настройки — выберите действие:', reply_markup=kb)
+
+# Settings keyboard button handlers
+@router.message(lambda m: m.from_user and m.from_user.id in ADMIN_IDS and m.text and m.text.strip() == '🌴 Отправить мастера в отпуск')
+async def admin_send_master_on_vacation(message: Message):
+    await message.answer('Функция будет доступна позже (заморожено для MVP)')
+
+@router.message(lambda m: m.from_user and m.from_user.id in ADMIN_IDS and m.text and m.text.strip() == '🗓 Настроить дни/часы')
+async def admin_set_days_hours(message: Message):
+    await message.answer('Функция будет доступна позже (заморожено для MVP)')
+
+@router.message(lambda m: m.from_user and m.from_user.id in ADMIN_IDS and m.text and m.text.strip() == 'Настроить обеденный перерыв')
+async def admin_set_lunch_break(message: Message):
+    await message.answer('Функция будет доступна позже (заморожено для MVP)')
+
+@router.message(lambda m: m.from_user and m.from_user.id in ADMIN_IDS and m.text and m.text.strip() == '📍 Настроить код страны')
+async def admin_set_country_code(message: Message):
+    await message.answer('Функция будет доступна позже (заморожено для MVP)')
+
+@router.message(lambda m: m.from_user and m.from_user.id in ADMIN_IDS and m.text and m.text.strip() == '📤 Экспорт в CSV')
+async def admin_export_csv(message: Message):
+    # Delegate to existing export command
+    await cmd_export_bookings(message)
+
+@router.message(lambda m: m.from_user and m.from_user.id in ADMIN_IDS and m.text and m.text.strip() == '⬅️ Назад в меню')
+async def admin_settings_back(message: Message):
+    kb = admin_menu_kb()
+    await message.answer('Возврат в админ‑меню:', reply_markup=kb)
+
+
+@router.message(lambda m: m.from_user and m.from_user.id in ADMIN_IDS and m.text and m.text.strip() == '➕ Добавить мастера')
+async def admin_add_master_button(message: Message):
+    # Start interactive add-master flow via button (friendly demo UX)
+    user_id = message.from_user.id
+    STAGED_EDITS[user_id] = {'type': 'master_add', 'step': 'name', 'data': {}}
+    await message.answer('Введите данные мастера. Бот проведёт вас по шагам.')
+
+
+@router.message(lambda m: m.from_user and m.from_user.id in ADMIN_IDS and m.text and m.text.strip() == '➖ Удалить мастера')
+async def admin_delete_master_button(message: Message):
+    await cmd_delete_master(message)
+
+
+@router.message(lambda m: m.from_user and m.from_user.id in ADMIN_IDS and m.text and m.text.strip() == '🧾 Просмотр заявок')
+async def admin_view_requests_button(message: Message):
+    # no specific handler implemented for manual requests in admin UI — placeholder
+    await message.answer('Функция будет доступна в следующей версии')
+
+
+@router.message(lambda m: m.from_user and m.from_user.id in ADMIN_IDS and m.text and m.text.strip() == '⭐ Просмотр отзывов')
+async def admin_view_reviews_button(message: Message):
+    # delegate to reviews listing handler if available
+    try:
+        from app.handlers.reviews import cmd_list_reviews
+        await cmd_list_reviews(message)
+    except Exception:
+        await message.answer('Функция будет доступна в следующей версии')
+
+
+@router.message(lambda m: m.from_user and m.from_user.id in ADMIN_IDS and m.text and m.text.strip() == '🧠 AI-помощник')
+async def admin_ai_button(message: Message):
+    await message.answer('Функция будет доступна в следующей версии')
+
+@router.message(lambda m: m.from_user and m.from_user.id in ADMIN_IDS and m.text and m.text.strip() == '🛠️ Настроить услуги')
+async def admin_manage_services_button(message: Message):
+    # Start interactive add-service flow via button (friendly demo UX)
+    user_id = message.from_user.id
+    STAGED_EDITS[user_id] = {'type': 'service_add', 'step': 'name', 'data': {}}
+    await message.answer('Введите данные услуги. Бот проведёт вас по шагам.')
+
+
+@router.message(lambda m: m.from_user and m.from_user.id in ADMIN_IDS and m.text and m.text.strip() == '🏠 Главное меню')
+async def admin_back_to_main(message: Message):
+    kb = main_menu_kb(is_owner=True)
+    await message.answer('Возврат в главное меню:', reply_markup=kb)
+
+
+# Handle main menu button that opens admin panel (label used in main menu)
+@router.message(lambda m: m.from_user and m.from_user.id in ADMIN_IDS and m.text and m.text.strip() == '🏠 Админ-меню')
+async def admin_open_menu_from_main(message: Message):
+    # delegate to /admin handler which shows the admin keyboard
+    await cmd_admin(message)
+
+# TODO: FROZEN — legacy command fallback for admin, not used in demo UI
 @router.message(Command('add_master'))
 async def cmd_add_master(message: Message):
     if not is_admin(message.from_user.id):
         await message.answer('Доступ запрещён')
         return
-    args = message.get_args()
+    args = get_args(message)
     if not args or '|' not in args:
         await message.answer('Использование: /add_master Имя|bio|контакт')
         return
@@ -46,12 +144,13 @@ async def cmd_add_master(message: Message):
     mid = await create_master(name, bio, contact)
     await message.answer(f'Мастер добавлен с id={mid}')
 
+# TODO: FROZEN — legacy command fallback for admin, not used in demo UI
 @router.message(Command('add_service'))
 async def cmd_add_service(message: Message):
     if not is_admin(message.from_user.id):
         await message.answer('Доступ запрещён')
         return
-    args = message.get_args()
+    args = get_args(message)
     if not args or '|' not in args:
         await message.answer('Использование: /add_service Название|цена|длительность_мин|описание')
         return
@@ -65,12 +164,13 @@ async def cmd_add_service(message: Message):
     sid = await create_service(name, description, price_v, duration_v)
     await message.answer(f'Услуга добавлена id={sid}')
 
+# TODO: FROZEN — legacy command fallback for admin, not used in demo UI
 @router.message(Command('set_schedule'))
 async def cmd_set_schedule(message: Message):
     if not is_admin(message.from_user.id):
         await message.answer('Доступ запрещён')
         return
-    args = message.get_args()
+    args = get_args(message)
     # usage: /set_schedule master_id|weekday(0-6)|09:00|17:00|interval_minutes
     if not args or '|' not in args:
         await message.answer('Использование: /set_schedule master_id|weekday(0-6)|start|end|[interval_minutes]')
@@ -90,10 +190,11 @@ async def cmd_set_schedule(message: Message):
 
 @router.message(Command('add_exception'))
 async def cmd_add_exception(message: Message):
+    # TODO: FROZEN for MVP demo — advanced master exception management not part of MVP
     if not is_admin(message.from_user.id):
         await message.answer('Доступ запрещён')
         return
-    args = message.get_args()
+    args = get_args(message)
     # usage: /add_exception master_id|YYYY-MM-DD|available(0|1)|[start]|[end]|[note]
     if not args or '|' not in args:
         await message.answer('Использование: /add_exception master_id|YYYY-MM-DD|available(0|1)|[start]|[end]|[note]')
@@ -114,10 +215,11 @@ async def cmd_add_exception(message: Message):
 
 @router.message(Command('list_exceptions'))
 async def cmd_list_exceptions(message: Message):
+    # TODO: FROZEN for MVP demo — advanced master exception management not part of MVP
     if not is_admin(message.from_user.id):
         await message.answer('Доступ запрещён')
         return
-    args = message.get_args()
+    args = get_args(message)
     if not args:
         await message.answer('Использование: /list_exceptions master_id')
         return
@@ -140,7 +242,7 @@ async def cmd_list_bookings(message: Message):
     if not is_admin(message.from_user.id):
         await message.answer('Доступ запрещён')
         return
-    args = message.get_args()
+    args = get_args(message)
     # optional args: start|end (YYYY-MM-DD)
     if args and '|' in args:
         start, end = [x.strip() for x in args.split('|',1)]
@@ -163,7 +265,7 @@ async def cmd_complete_booking(message: Message):
     if not is_admin(message.from_user.id):
         await message.answer('🚫 Доступ запрещён. Только для администраторов.')
         return
-    args = message.get_args()
+    args = get_args(message)
     if not args:
         await message.answer('Использование: /complete_booking booking_id\nПример: /complete_booking 123')
         return
@@ -193,6 +295,8 @@ async def cmd_complete_booking(message: Message):
 
 @router.message(Command('export_bookings'))
 async def cmd_export_bookings(message: Message):
+    # TODO: FROZEN for MVP demo — exported data analytics not part of client demo
+    # To enable: uncomment code below and ensure app.admin_utils is imported
     if not is_admin(message.from_user.id):
         await message.answer('Доступ запрещён')
         return
@@ -209,12 +313,31 @@ async def cmd_export_bookings(message: Message):
     except Exception as e:
         await message.answer('Ошибка экспорта: ' + str(e))
 
+
+@router.message(Command('export_reviews'))
+async def cmd_export_reviews(message: Message):
+    # TODO: FROZEN for MVP demo — exported data analytics not part of client demo
+    # To enable: uncomment code below and ensure app.export is imported
+    if not is_admin(message.from_user.id):
+        await message.answer('Доступ запрещён')
+        return
+    from app.export import export_reviews_csv_bytes
+    from io import BytesIO
+    try:
+        data = await export_reviews_csv_bytes()
+        bio = BytesIO(data)
+        bio.seek(0)
+        await message.bot.send_document(message.chat.id, bio, filename='reviews_export.csv', caption='Экспорт отзывов', disable_notification=True)
+        await message.answer('Экспорт отправлен')
+    except Exception as e:
+        await message.answer('Ошибка экспорта: ' + str(e))
+
 @router.message(Command('delete_master'))
 async def cmd_delete_master(message: Message):
     if not is_admin(message.from_user.id):
         await message.answer('Доступ запрещён')
         return
-    args = message.get_args()
+    args = get_args(message)
     if not args:
         await message.answer('Использование: /delete_master master_id')
         return
@@ -270,7 +393,7 @@ async def cmd_edit_master(message: Message):
         await message.answer('Доступ запрещён')
         return
     # usage: /edit_master id|Name|bio|contact  OR /edit_master id  (start interactive)
-    args = message.get_args()
+    args = get_args(message)
     if not args:
         await message.answer('Использование: /edit_master id|Name|bio|contact  OR /edit_master id (для интерактивного редактирования)')
         return
@@ -308,7 +431,7 @@ async def cmd_edit_service(message: Message):
         await message.answer('Доступ запрещён')
         return
     # usage: /edit_service id|Name|price|duration|description  OR /edit_service id (interactive)
-    args = message.get_args()
+    args = get_args(message)
     if not args:
         await message.answer('Использование: /edit_service id|Name|price|duration|description  OR /edit_service id (для интерактивного редактирования)')
         return
@@ -343,7 +466,7 @@ async def cmd_delete_service(message: Message):
     if not is_admin(message.from_user.id):
         await message.answer('Доступ запрещён')
         return
-    args = message.get_args()
+    args = get_args(message)
     if not args:
         await message.answer('Использование: /delete_service service_id')
         return
@@ -442,6 +565,43 @@ async def handle_staged_edit(message: Message):
             staged['step'] = 'confirm'
             await message.answer(summary, reply_markup=kb)
             return
+    if t == 'master_add':
+        # interactive creation flow for a new master
+        if step == 'name':
+            if not text:
+                await message.answer('Введите имя мастера (обязательно). Попробуйте ещё раз')
+                return
+            if len(text) > MAX_NAME_LEN:
+                await message.answer(f'Имя слишком длинное (макс {MAX_NAME_LEN} символов), попробуйте ещё раз')
+                return
+            staged['data']['name'] = text
+            staged['step'] = 'bio'
+            await message.answer(f"Введите короткое описание (bio). Пример: 'Опытный мастер по стрижкам' (макс {MAX_BIO_LEN} символов).")
+            return
+        if step == 'bio':
+            if text:
+                if len(text) > MAX_BIO_LEN:
+                    await message.answer(f'Bio слишком длинное (макс {MAX_BIO_LEN} символов), попробуйте ещё раз')
+                    return
+                staged['data']['bio'] = text
+            staged['step'] = 'contact'
+            await message.answer(f"Введите контакт (например: +7 900 000-00-00 или @username).")
+            return
+        if step == 'contact':
+            if text:
+                if len(text) > MAX_CONTACT_LEN:
+                    await message.answer(f'Контакт слишком длинный (макс {MAX_CONTACT_LEN} символов), попробуйте ещё раз')
+                    return
+                staged['data']['contact'] = text
+            # create master
+            d = staged['data']
+            try:
+                mid = await create_master(d.get('name'), d.get('bio') or '', d.get('contact') or '')
+                await message.answer(f'Мастер добавлен с id={mid}')
+            except Exception as e:
+                await message.answer('Ошибка при добавлении мастера: ' + str(e))
+            STAGED_EDITS.pop(user_id, None)
+            return
     elif t == 'service':
         if step == 'name':
             if text:
@@ -494,6 +654,66 @@ async def handle_staged_edit(message: Message):
             ]])
             staged['step'] = 'confirm'
             await message.answer(summary, reply_markup=kb)
+            return
+    if t == 'service_add':
+        # interactive creation flow for a new service
+        if step == 'name':
+            if not text:
+                await message.answer('Введите название услуги (обязательно). Попробуйте ещё раз')
+                return
+            if len(text) > MAX_NAME_LEN:
+                await message.answer(f'Имя слишком длинное (макс {MAX_NAME_LEN} символов), попробуйте ещё раз')
+                return
+            staged['data']['name'] = text
+            staged['step'] = 'price'
+            await message.answer(f"Введите цену (пример: 12.5). Допустимый диапазон: {MIN_PRICE} — {MAX_PRICE}.")
+            return
+        if step == 'price':
+            if not text:
+                await message.answer('Введите цену (обязательно). Попробуйте ещё раз')
+                return
+            try:
+                v = float(text)
+            except Exception:
+                await message.answer('Неверный формат цены. Введите число, например: 12.5')
+                return
+            if not (MIN_PRICE <= v <= MAX_PRICE):
+                await message.answer(f'Цена должна быть между {MIN_PRICE} и {MAX_PRICE}. Введите корректное значение, например 12.5')
+                return
+            staged['data']['price'] = v
+            staged['step'] = 'duration'
+            await message.answer(f"Введите длительность в минутах (пример: 30). Допустимый диапазон: {MIN_DURATION} — {MAX_DURATION} минут.")
+            return
+        if step == 'duration':
+            if not text:
+                await message.answer('Введите длительность (обязательно). Попробуйте ещё раз')
+                return
+            try:
+                v = int(text)
+            except Exception:
+                await message.answer('Неверный формат длительности. Введите целое число, например: 45')
+                return
+            if not (MIN_DURATION <= v <= MAX_DURATION):
+                await message.answer(f'Длительность должна быть между {MIN_DURATION} и {MAX_DURATION} минут. Введите корректное значение, например: 30')
+                return
+            staged['data']['duration_minutes'] = v
+            staged['step'] = 'description'
+            await message.answer(f"Введите описание для услуги (можно оставить пустым)")
+            return
+        if step == 'description':
+            if text:
+                if len(text) > MAX_DESC_LEN:
+                    await message.answer(f'Описание слишком длинное (макс {MAX_DESC_LEN} символов), попробуйте ещё раз')
+                    return
+                staged['data']['description'] = text
+            # create service
+            d = staged['data']
+            try:
+                sid = await create_service(d.get('name'), d.get('description') or '', d.get('price'), d.get('duration_minutes'))
+                await message.answer(f'Услуга добавлена id={sid}')
+            except Exception as e:
+                await message.answer('Ошибка при добавлении услуги: ' + str(e))
+            STAGED_EDITS.pop(user_id, None)
             return
 
 

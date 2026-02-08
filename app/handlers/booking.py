@@ -1,10 +1,14 @@
 from aiogram import Router
 from aiogram.types import CallbackQuery, Message
-from aiogram.filters import Text
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
-from app.repo import get_or_create_user, create_booking, list_masters, SlotTaken, DoubleBooking
-from app.utils import valid_phone
+from aiogram.filters import StateFilter
+from app.repo import get_or_create_user, create_booking, list_masters, SlotTaken, DoubleBooking, get_service, average_rating_for_master
+from app.utils import valid_phone, format_rating
+
+# Для автозавершения
+from app.auto_complete import schedule_auto_complete
+from app.reminders import schedule_reminders
 
 router = Router()
 
@@ -19,28 +23,102 @@ class BookingStates(StatesGroup):
 
 
 async def _set_state(ctx: FSMContext, state_obj: State):
-    """Set FSM state in a way compatible with real FSMContext and the test FakeState."""
+    """Set FSM state in a way compatible with real FSMContext and the test FakeState.
+
+    Prefer using ctx.set_state when available (real aiogram), then fall back to
+    other approaches used in tests (state_obj.set() or storing '_state' in data).
+    Adds debug prints to help identify which mechanism is used at runtime.
+    """
+    # Try context-aware API first (aiogram FSMContext.set_state)
     try:
-        # aiogram State.set() may exist
-        await state_obj.set()
-    except Exception:
+        await ctx.set_state(state_obj)
         try:
-            await ctx.update_data(_state=state_obj.state)
+            print('set_state: ctx.set_state(state_obj) succeeded')
+        except Exception:
+            pass
+        return
+    except Exception as e:
+        try:
+            print('set_state: ctx.set_state(state_obj) failed:', repr(e))
+        except Exception:
+            pass
+    try:
+        await ctx.set_state(state_obj.state)
+        try:
+            print('set_state: ctx.set_state(state_obj.state) succeeded')
+        except Exception:
+            pass
+        return
+    except Exception as e:
+        try:
+            print('set_state: ctx.set_state(state_obj.state) failed:', repr(e))
+        except Exception:
+            pass
+    # Try State.set() (some aiogram versions may support this)
+    try:
+        await state_obj.set()
+        try:
+            print('set_state: state_obj.set() succeeded')
+        except Exception:
+            pass
+        return
+    except Exception as e:
+        try:
+            print('set_state: state_obj.set() failed:', repr(e))
+        except Exception:
+            pass
+    # Last resort: store state marker in context data (used by FakeState in tests)
+    try:
+        await ctx.update_data(_state=state_obj.state)
+        try:
+            print('set_state: ctx.update_data(_state=...) succeeded')
+        except Exception:
+            pass
+    except Exception as e:
+        try:
+            print('set_state: ctx.update_data(_state=...) failed:', repr(e))
         except Exception:
             pass
 
 
 async def _get_state(ctx: FSMContext):
     try:
-        return await ctx.get_state()
-    except Exception:
+        s = await ctx.get_state()
+        try:
+            print('get_state: ctx.get_state() ->', s)
+        except Exception:
+            pass
+        return s
+    except Exception as e:
+        try:
+            print('get_state: ctx.get_state() failed:', repr(e))
+        except Exception:
+            pass
         data = await ctx.get_data()
-        return data.get('_state')
+        s = data.get('_state')
+        try:
+            print('get_state: fallback ctx.get_data() ->', s)
+        except Exception:
+            pass
+        return s
 
-@router.callback_query(Text(startswith='book:service:'))
+@router.callback_query(lambda q: q.data and q.data.startswith('book:service:'))
 async def cb_select_service(query: CallbackQuery, state: FSMContext):
     service_id = int(query.data.split(':')[-1])
     await state.update_data(service_id=service_id)
+    # record the initiator user id so we can detect mismatched interactions
+    
+    try:
+        await state.update_data(booking_user_id=query.from_user.id)
+    except Exception:
+        pass
+    try:
+        await state.update_data(booking_user_id=query.from_user.id)
+        cur = await state.get_state()
+        data_now = await state.get_data()
+        print('cb_select_service: after update ->', cur, data_now)
+    except Exception:
+        pass
     # list masters
     masters = await list_masters()
     if not masters:
@@ -48,19 +126,71 @@ async def cb_select_service(query: CallbackQuery, state: FSMContext):
         return
     text = 'Выберите мастера или без выбора:'
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    kb = InlineKeyboardMarkup(inline_keyboard=[])
+    buttons = []
     for m in masters:
-        kb.add(InlineKeyboardButton(text=m['name'], callback_data=f'book:master:{m["id"]}'))
-    kb.add(InlineKeyboardButton(text='Без выбора', callback_data='book:master:0'))
+        avg, cnt = await average_rating_for_master(m['id'])
+        rating = format_rating(avg, cnt)
+        label = m['name']
+        if rating:
+            label = f"{m['name']} {rating}"
+        buttons.append([InlineKeyboardButton(text=label, callback_data=f'book:master:{m["id"]}')])
+    buttons.append([InlineKeyboardButton(text='Без выбора', callback_data='book:master:0')])
+    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
     await query.message.answer(text, reply_markup=kb)
     await query.answer("")
 
-@router.callback_query(Text(startswith='book:master:'))
+@router.callback_query(lambda q: q.data and q.data.startswith('book:master:'))
 async def cb_select_master(query: CallbackQuery, state: FSMContext):
     master_id = int(query.data.split(':')[-1])
     await state.update_data(master_id=master_id)
+    # ensure booking_user_id reflects the user who chose the master
+    try:
+        await state.update_data(booking_user_id=query.from_user.id)
+    except Exception:
+        pass
+    try:
+        print('cb_select_master called', master_id, 'by user', query.from_user.id)
+    except Exception:
+        pass
+    # show master's working days/time (MVP: derive from master_schedule or defaults)
+    try:
+        from app.scheduler import get_master_work_info
+        days, start_time, end_time, _ = await get_master_work_info(master_id)
+        # convert days list to readable string, compress consecutive ranges
+        rus = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс']
+        def format_days(ds):
+            if not ds:
+                return ''
+            ds = sorted(ds)
+            ranges = []
+            start = prev = ds[0]
+            for d in ds[1:]:
+                if d == prev + 1:
+                    prev = d
+                    continue
+                if start == prev:
+                    ranges.append(rus[start])
+                else:
+                    ranges.append(f"{rus[start]}–{rus[prev]}")
+                start = prev = d
+            if start == prev:
+                ranges.append(rus[start])
+            else:
+                ranges.append(f"{rus[start]}–{rus[prev]}")
+            return ','.join(ranges)
+        days_str = format_days(days)
+        await query.message.answer(f'Мастер работает: {days_str}, {start_time}–{end_time}')
+    except Exception:
+        pass
     await query.message.answer('📅 Введите дату визита в формате ГГГГ-ММ-ДД. Пример: 2026-01-15')
     await _set_state(state, BookingStates.DATE)
+    # dump state after setting for diagnostic
+    try:
+        cur = await state.get_state()
+        data_now = await state.get_data()
+        print('cb_select_master: after set_state ->', cur, data_now)
+    except Exception:
+        pass
     await query.answer("")
 
 
@@ -72,7 +202,7 @@ class ManualRequestStates(StatesGroup):
     CONFIRM = State()
 
 
-@router.callback_query(Text(startswith='manual:request:start'))
+@router.callback_query(lambda q: q.data and q.data.startswith('manual:request:start'))
 async def cb_manual_start(query: CallbackQuery, state: FSMContext):
     # can be 'manual:request:start' or 'manual:request:start:master:<id>'
     parts = query.data.split(':')
@@ -89,29 +219,23 @@ async def cb_manual_start(query: CallbackQuery, state: FSMContext):
     await query.answer("")
 
 
-@router.callback_query(Text(startswith='manual:request:cancel'))
+@router.callback_query(lambda q: q.data and q.data.startswith('manual:request:cancel'))
 async def cb_manual_cancel(query: CallbackQuery, state: FSMContext):
     await state.clear()
     await query.message.answer('Ручная заявка отменена.')
     await query.answer("")
 
 
-@router.message(lambda message: True)
+@router.message(StateFilter(ManualRequestStates.PREFER))
 async def mr_prefer(message: Message, state: FSMContext):
-    cur = await _get_state(state)
-    if cur != ManualRequestStates.PREFER.state:
-        return
     pref = (message.text or '').strip()
     await state.update_data(manual_prefer=pref)
     await message.answer('Введите ваше имя для заявки:')
     await _set_state(state, ManualRequestStates.NAME)
 
 
-@router.message(lambda message: True)
+@router.message(StateFilter(ManualRequestStates.NAME))
 async def mr_name(message: Message, state: FSMContext):
-    cur = await _get_state(state)
-    if cur != ManualRequestStates.NAME.state:
-        return
     name = (message.text or '').strip()
     if not name:
         await message.answer('Имя не может быть пустым. Введите ваше имя:')
@@ -121,11 +245,8 @@ async def mr_name(message: Message, state: FSMContext):
     await _set_state(state, ManualRequestStates.PHONE)
 
 
-@router.message(lambda message: True)
+@router.message(StateFilter(ManualRequestStates.PHONE))
 async def mr_phone(message: Message, state: FSMContext):
-    cur = await _get_state(state)
-    if cur != ManualRequestStates.PHONE.state:
-        return
     phone = (message.text or '').strip()
     from app.utils import valid_phone
     if not valid_phone(phone):
@@ -140,7 +261,7 @@ async def mr_phone(message: Message, state: FSMContext):
     await _set_state(state, ManualRequestStates.CONFIRM)
 
 
-@router.callback_query(Text(startswith='manual:request:confirm'))
+@router.callback_query(lambda q: q.data and q.data.startswith('manual:request:confirm'))
 async def cb_manual_confirm(query: CallbackQuery, state: FSMContext):
     cur = await _get_state(state)
     if cur != ManualRequestStates.CONFIRM.state:
@@ -162,17 +283,27 @@ async def cb_manual_confirm(query: CallbackQuery, state: FSMContext):
     await state.clear()
     await query.answer("")
 
-@router.callback_query(Text(startswith='book:master_choose:'))
+@router.callback_query(lambda q: q.data and q.data.startswith('book:master_choose:'))
 async def cb_master_choose(query: CallbackQuery, state: FSMContext):
     mid = int(query.data.split(':')[-1])
     data = await state.get_data()
     date_s = data.get('date')
     svc_id = data.get('service_id')
+    try:
+        print('cb_master_choose called', mid, date_s, svc_id)
+    except Exception:
+        pass
     from app.scheduler import generate_slots
     from app.repo import get_service, get_master
     svc = await get_service(svc_id)
     if not svc:
         await query.message.answer('❌ Ошибка: услуга не найдена. Попробуйте начать заново.')
+        await query.answer("")
+        return
+    # Defensive: if date wasn't saved in state, prompt the user to re-enter
+    if not date_s:
+        await query.message.answer('Похоже, дата не была сохранена. Пожалуйста, введите дату в формате YYYY-MM-DD.')
+        await _set_state(state, BookingStates.DATE)
         await query.answer("")
         return
     slots = await generate_slots(mid, date_s, svc['duration_minutes'])
@@ -194,28 +325,78 @@ async def cb_master_choose(query: CallbackQuery, state: FSMContext):
     await _set_state(state, BookingStates.TIME)
     await query.answer("")
 
-@router.message(lambda message: True)
+@router.message(StateFilter(BookingStates.DATE))
 async def process_date(message: Message, state: FSMContext):
-    cur = await _get_state(state)
-    if cur != BookingStates.DATE.state:
-        return
+    # explicit debug entry
+    try:
+        print("process_date entered", message.text)
+    except Exception:
+        pass
+
+    # entry debug: confirm handler received a message and check current state
+    try:
+        print('process_date entry', getattr(message.from_user, 'id', None), getattr(message, 'text', None))
+    except Exception:
+        pass
     date_s = message.text.strip()
     # minimal validation
     try:
         import datetime
         datetime.date.fromisoformat(date_s)
     except Exception:
+        try:
+            print('process_date returning: invalid date format', date_s)
+        except Exception:
+            pass
         await message.answer('Неверный формат даты. Попробуйте YYYY-MM-DD')
         return
+
+    # Check that the message author is the same user who initiated booking flow
+    data = await state.get_data()
+    try:
+        print('state data:', data)
+    except Exception:
+        pass
+
+    initiator = data.get('booking_user_id')
+    if initiator and initiator != message.from_user.id:
+        try:
+            print('process_date returning: user mismatch, initiator:', initiator, 'message user:', message.from_user.id)
+        except Exception:
+            pass
+        await message.answer('Похоже, вы используете другой аккаунт, чем тот, что начинал бронирование. Пожалуйста, нажмите "Записаться" ещё раз в своём аккаунте.')
+        return
+
+    # check service id presence
+    svc_id = data.get('service_id')
+    if not svc_id:
+        try:
+            print('process_date returning: missing service_id in state')
+        except Exception:
+            pass
+        await message.answer('Ошибка: service_id потерян в состоянии. Начните запись заново через /start')
+        return
+
     await state.update_data(date=date_s)
+
+    # debug: confirm handler was called with parsed date
+    try:
+        print("process_date called", date_s)
+    except Exception:
+        pass
 
     data = await state.get_data()
     master_id = data.get('master_id')
     svc_id = data.get('service_id')
     from app.repo import list_masters, get_service
     from app.scheduler import generate_slots
+
     svc = await get_service(svc_id)
     if not svc:
+        try:
+            print('process_date returning: service not found', svc_id)
+        except Exception:
+            pass
         await message.answer('Ошибка: услуга не найдена')
         return
 
@@ -224,43 +405,127 @@ async def process_date(message: Message, state: FSMContext):
         masters = await list_masters()
         masters_with = []
         for m in masters:
-            slots = await generate_slots(m['id'], date_s, svc['duration_minutes'])
+            try:
+                slots = await generate_slots(m['id'], date_s, svc['duration_minutes'])
+            except Exception as e:
+                try:
+                    print('generate_slots error:', e)
+                except Exception:
+                    pass
+                # skip this master on error
+                continue
             if slots:
                 masters_with.append((m, slots))
         if not masters_with:
+            try:
+                print('process_date returning: no masters_with slots')
+            except Exception:
+                pass
             from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
             kb = InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton('Отправить ручную заявку админу', callback_data='manual:request:start'),
-                InlineKeyboardButton('Отмена', callback_data='manual:request:cancel')
+                InlineKeyboardButton(text='Отправить ручную заявку админу', callback_data='manual:request:start'),
+                InlineKeyboardButton(text='Отмена', callback_data='manual:request:cancel')
             ]])
             await message.answer('К сожалению, на этот день нет свободных слотов. Хотите отправить ручную заявку админу?', reply_markup=kb)
             return
         from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
         rows = []
         for m, slots in masters_with:
-            rows.append([InlineKeyboardButton(text=f"{m['name']} ({len(slots)}), выбрать", callback_data=f'book:master_choose:{m['id']}')])
+            avg, cnt = await average_rating_for_master(m['id'])
+            rating = format_rating(avg, cnt)
+            label = f"{m['name']} ({len(slots)}), выбрать"
+            if rating:
+                label = f"{m['name']} {rating} ({len(slots)}), выбрать"
+            # fixed callback_data quoting to avoid nested single-quote syntax error
+            rows.append([InlineKeyboardButton(text=label, callback_data=f"book:master_choose:{m['id']}")])
         # Also show masters with zero slots as option for manual request
         all_masters = await list_masters()
         for m in all_masters:
             if not any(m2['id'] == m['id'] for m2, _ in masters_with):
-                rows.append([InlineKeyboardButton(text=f"{m['name']} (❌ занято) — запросить", callback_data=f'manual:request:start:master:{m["id"]}')])
+                avg, cnt = await average_rating_for_master(m['id'])
+                rating = format_rating(avg, cnt)
+                label = f"{m['name']} (❌ занято) — запросить"
+                if rating:
+                    label = f"{m['name']} {rating} (❌ занято) — запросить"
+                rows.append([InlineKeyboardButton(text=label, callback_data=f"manual:request:start:master:{m['id']}")])
         kb = InlineKeyboardMarkup(inline_keyboard=rows)
         await message.answer('Выберите мастера с доступным временем или отправьте запрос для занятых мастеров:', reply_markup=kb)
+        try:
+            print('process_date returning: showed masters list')
+        except Exception:
+            pass
         return
 
     # specific master flow
-    slots = await generate_slots(master_id, date_s, svc['duration_minutes'])
+    # Validate that master works on the chosen weekday and inform the user if not
+    try:
+        if master_id and master_id != 0:
+            import datetime as _dt
+            weekday = _dt.date.fromisoformat(date_s).weekday()
+            try:
+                from app.scheduler import get_master_work_info
+                days, start_time, end_time, _ = await get_master_work_info(master_id)
+                if days is None:
+                    days = []
+                if weekday not in days:
+                    # format days for message
+                    rus = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс']
+                    def format_days(ds):
+                        if not ds:
+                            return ''
+                        ds = sorted(ds)
+                        ranges = []
+                        start = prev = ds[0]
+                        for d in ds[1:]:
+                            if d == prev + 1:
+                                prev = d
+                                continue
+                            if start == prev:
+                                ranges.append(rus[start])
+                            else:
+                                ranges.append(f"{rus[start]}–{rus[prev]}")
+                            start = prev = d
+                        if start == prev:
+                            ranges.append(rus[start])
+                        else:
+                            ranges.append(f"{rus[start]}–{rus[prev]}")
+                        return ','.join(ranges)
+                    days_str = format_days(days)
+                    await message.answer(f'Этот мастер не работает в этот день недели. Доступные дни: {days_str}.')
+                    return
+            except Exception:
+                pass
+    except Exception:
+        pass
+    try:
+        slots = await generate_slots(master_id, date_s, svc['duration_minutes'])
+    except Exception as e:
+        try:
+            print('generate_slots error:', e)
+        except Exception:
+            pass
+        await message.answer('Ошибка генерации слотов')
+        try:
+            print('process_date returning: generate_slots failed for specific master')
+        except Exception:
+            pass
+        return
     if not slots:
+        try:
+            print('process_date returning: no slots for specific master', master_id)
+        except Exception:
+            pass
         await message.answer('К сожалению, у выбранного мастера нет слотов на этот день. Попробуйте другую дату или мастера.')
         return
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    kb = InlineKeyboardMarkup()
+    buttons = []
     for t in slots:
-        kb.add(InlineKeyboardButton(t, callback_data=f'book:time:{t}'))
+        buttons.append([InlineKeyboardButton(text=t, callback_data=f'book:time:{t}')])
+    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
     await message.answer('Выберите время:', reply_markup=kb)
     await _set_state(state, BookingStates.TIME)
 
-@router.callback_query(Text(startswith='book:time:'))
+@router.callback_query(lambda q: q.data and q.data.startswith('book:time:'))
 async def cb_select_time(query: CallbackQuery, state: FSMContext):
     time_s = query.data.split(':')[-1]
     await state.update_data(time=time_s)
@@ -268,11 +533,8 @@ async def cb_select_time(query: CallbackQuery, state: FSMContext):
     await _set_state(state, BookingStates.NAME)
     await query.answer("")
 
-@router.message(lambda message: True)
+@router.message(StateFilter(BookingStates.TIME))
 async def process_time(message: Message, state: FSMContext):
-    cur = await _get_state(state)
-    if cur != BookingStates.TIME.state:
-        return
     time_s = message.text.strip()
     try:
         import datetime
@@ -284,20 +546,14 @@ async def process_time(message: Message, state: FSMContext):
     await message.answer('Введите ваше имя:')
     await _set_state(state, BookingStates.NAME)
 
-@router.message(lambda message: True)
+@router.message(StateFilter(BookingStates.NAME))
 async def process_name(message: Message, state: FSMContext):
-    cur = await _get_state(state)
-    if cur != BookingStates.NAME.state:
-        return
     await state.update_data(name=message.text.strip())
     await message.answer('Введите телефон (например, +37061234567):')
     await _set_state(state, BookingStates.PHONE)
 
-@router.message(lambda message: True)
+@router.message(StateFilter(BookingStates.PHONE))
 async def process_phone(message: Message, state: FSMContext):
-    cur = await _get_state(state)
-    if cur != BookingStates.PHONE.state:
-        return
     phone = message.text.strip()
     if not valid_phone(phone):
         await message.answer('Неверный формат телефона. Попробуйте +37061234567')
@@ -306,11 +562,11 @@ async def process_phone(message: Message, state: FSMContext):
     data = await state.get_data()
     text = f"Подтвердите запись:\nУслуга ID: {data['service_id']}\nМастер ID: {data['master_id']}\nДата: {data['date']}\nВремя: {data['time']}\nИмя: {data['name']}\nТелефон: {data['phone']}"
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    kb = InlineKeyboardMarkup().add(InlineKeyboardButton(text='Подтвердить', callback_data='book:confirm'), InlineKeyboardButton(text='Отмена', callback_data='book:cancel'))
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='Подтвердить', callback_data='book:confirm'), InlineKeyboardButton(text='Отмена', callback_data='book:cancel')]])
     await message.answer(text, reply_markup=kb)
     await _set_state(state, BookingStates.CONFIRM)
 
-@router.callback_query(Text(equals='book:confirm'))
+@router.callback_query(lambda q: q.data == 'book:confirm')
 async def cb_confirm(query: CallbackQuery, state: FSMContext):
     cur = await _get_state(state)
     if cur != BookingStates.CONFIRM.state:
@@ -320,6 +576,23 @@ async def cb_confirm(query: CallbackQuery, state: FSMContext):
     user = await get_or_create_user(query.from_user.id, name=data.get('name'), phone=data.get('phone'))
     try:
         await create_booking(user['id'], data['service_id'], data['master_id'] if data['master_id'] != 0 else None, data['date'], data['time'], data['name'], data['phone'])
+        # Получаем длительность услуги и id бронирования (поиск по данным)
+        service = await get_service(data['service_id'])
+        duration = service['duration_minutes'] if service and 'duration_minutes' in service else 30
+        # Получаем id только что созданной записи (по уникальным данным)
+        from app.repo import list_bookings
+        bookings = await list_bookings()
+        booking_id = None
+        for b in bookings:
+            if b['user_id'] == user['id'] and b['service_id'] == data['service_id'] and b['date'] == data['date'] and b['time'] == data['time']:
+                booking_id = b['id']
+                break
+        if booking_id:
+            schedule_auto_complete(booking_id, data['date'], data['time'], duration)
+            try:
+                schedule_reminders(booking_id, data['date'], data['time'])
+            except Exception:
+                pass
     except SlotTaken:
         await query.message.answer('😔 Извините, это время уже занято. Попробуйте выбрать другое.')
         await state.clear()
@@ -340,7 +613,7 @@ async def cb_confirm(query: CallbackQuery, state: FSMContext):
     await state.clear()
     await query.answer()
 
-@router.callback_query(Text(equals='book:cancel'))
+@router.callback_query(lambda q: q.data == 'book:cancel')
 async def cb_cancel(query: CallbackQuery, state: FSMContext):
     cur = await _get_state(state)
     if cur != BookingStates.CONFIRM.state:
