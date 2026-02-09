@@ -58,4 +58,5 @@ async def cb_services_page(query: CallbackQuery):
         await query.message.edit_text(text, reply_markup=kb)
     except Exception:
         await query.message.answer(text, reply_markup=kb)
+    await query.answer('')
     await query.answer("")

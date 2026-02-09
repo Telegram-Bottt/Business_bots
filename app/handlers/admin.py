@@ -2,7 +2,7 @@ from aiogram import Router
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.filters import Command
 import os
-from app.repo import create_master, create_service, list_bookings, set_master_schedule, delete_master, delete_service, update_master, update_service, get_master, get_service, set_booking_status, get_booking, get_user_by_id
+from app.repo import create_master, create_service, list_bookings, set_master_schedule, delete_master, delete_service, update_master, update_service, get_master, get_service, set_booking_status, get_booking, get_user_by_id, list_masters, list_services
 from app.utils import get_args_from_message as get_args
 from app.scheduler import add_exception, list_exceptions
 from app.keyboards import admin_menu_kb, settings_kb, main_menu_kb
@@ -87,7 +87,17 @@ async def admin_add_master_button(message: Message):
 
 @router.message(lambda m: m.from_user and m.from_user.id in ADMIN_IDS and m.text and m.text.strip() == '➖ Удалить мастера')
 async def admin_delete_master_button(message: Message):
-    await cmd_delete_master(message)
+    from app.repo import list_masters
+    masters = await list_masters()
+    if not masters:
+        await message.answer('Нет мастеров для удаления')
+        return
+    
+    kb_rows = []
+    for m in masters:
+        kb_rows.append([InlineKeyboardButton(text=m['name'], callback_data=f"admin:delete_master:choose:{m['id']}")])
+    kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+    await message.answer('Выберите мастера для удаления:', reply_markup=kb)
 
 
 @router.message(lambda m: m.from_user and m.from_user.id in ADMIN_IDS and m.text and m.text.strip() == '🧾 Просмотр заявок')
@@ -112,10 +122,12 @@ async def admin_ai_button(message: Message):
 
 @router.message(lambda m: m.from_user and m.from_user.id in ADMIN_IDS and m.text and m.text.strip() == '🛠️ Настроить услуги')
 async def admin_manage_services_button(message: Message):
-    # Start interactive add-service flow via button (friendly demo UX)
-    user_id = message.from_user.id
-    STAGED_EDITS[user_id] = {'type': 'service_add', 'step': 'name', 'data': {}}
-    await message.answer('Введите данные услуги. Бот проведёт вас по шагам.')
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='➕ Добавить услугу', callback_data='admin:service:add')],
+        [InlineKeyboardButton(text='✏️ Изменить услугу', callback_data='admin:service:edit')],
+        [InlineKeyboardButton(text='🗑 Удалить услугу', callback_data='admin:service:delete')]
+    ])
+    await message.answer('Управление услугами — выберите действие:', reply_markup=kb)
 
 
 @router.message(lambda m: m.from_user and m.from_user.id in ADMIN_IDS and m.text and m.text.strip() == '🏠 Главное меню')
@@ -350,6 +362,61 @@ async def cmd_export_reviews(message: Message):
     except Exception as e:
         await message.answer('Ошибка экспорта: ' + str(e))
 
+@router.callback_query(lambda c: c.data and c.data.startswith('admin:delete_master:choose:'))
+async def cb_delete_master_choose(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    if not is_admin(user_id):
+        await callback.answer('Доступ запрещён', show_alert=True)
+        return
+    try:
+        mid = int(callback.data.split(':')[-1])
+    except Exception:
+        await callback.answer('Неверный id', show_alert=True)
+        return
+    
+    master = await get_master(mid)
+    if not master:
+        await callback.answer('Мастер не найден', show_alert=True)
+        return
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text='✅ Подтвердить', callback_data=f'admin:delete_master:confirm:{mid}'),
+        InlineKeyboardButton(text='❌ Отмена', callback_data=f'admin:delete_master:cancel')
+    ]])
+    
+    await callback.message.edit_text(
+        f'Вы уверены, что хотите удалить мастера: {master["name"]}?',
+        reply_markup=kb
+    )
+    await callback.answer()
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('admin:delete_master:confirm:'))
+async def cb_delete_master_confirm(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    if not is_admin(user_id):
+        await callback.answer('Доступ запрещён', show_alert=True)
+        return
+    try:
+        mid = int(callback.data.split(':')[-1])
+    except Exception:
+        await callback.answer('Неверный id', show_alert=True)
+        return
+    
+    master = await get_master(mid)
+    master_name = master['name'] if master else 'мастер'
+    
+    await delete_master(mid)
+    await callback.message.edit_text(f'✅ Мастер {master_name} удалён')
+    await callback.answer('Удалено')
+
+
+@router.callback_query(lambda c: c.data == 'admin:delete_master:cancel')
+async def cb_delete_master_cancel(callback: CallbackQuery):
+    await callback.message.edit_text('❌ Удаление отменено')
+    await callback.answer()
+
+
 @router.message(Command('delete_master'))
 async def cmd_delete_master(message: Message):
     if not is_admin(message.from_user.id):
@@ -498,6 +565,234 @@ async def cmd_delete_service(message: Message):
         InlineKeyboardButton(text='Отменить', callback_data=f'cancel_delete_service:{sid}')
     ]])
     await message.answer(f'Вы уверены, что хотите удалить услугу {sid}?', reply_markup=kb)
+
+
+# ===== INLINE ADMIN SERVICE MANAGEMENT =====
+
+async def _build_services_page_admin(services, page: int):
+    """Build admin service list with delete/edit options and pagination."""
+    start = page * 5
+    end = start + 5
+    page_items = services[start:end]
+    kb_rows = []
+    text_lines = []
+    
+    for s in page_items:
+        text = f"💫 {s['name']} — {s['price']}€"
+        text_lines.append(text)
+        kb_rows.append([
+            InlineKeyboardButton(text=f'✏️ Изменить: {s["name"]}', callback_data=f'admin:service:edit:choose:{s["id"]}'),
+            InlineKeyboardButton(text=f'🗑 Удалить: {s["name"]}', callback_data=f'admin:service:delete:choose:{s["id"]}')
+        ])
+    
+    # pagination
+    nav_row = []
+    if page > 0:
+        nav_row.append(InlineKeyboardButton(text='⬅️ Назад', callback_data=f'admin:services:page:{page-1}'))
+    if end < len(services):
+        nav_row.append(InlineKeyboardButton(text='➡️ Далее', callback_data=f'admin:services:page:{page+1}'))
+    if nav_row:
+        kb_rows.append(nav_row)
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+    text = "\n".join(text_lines) or 'Нет доступных услуг.'
+    return text, kb
+
+
+@router.callback_query(lambda c: c.data == 'admin:service:add')
+async def cb_admin_service_add(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    if not is_admin(user_id):
+        await callback.answer('Доступ запрещён', show_alert=True)
+        return
+    
+    STAGED_EDITS[user_id] = {'type': 'service_add', 'step': 'name', 'data': {}}
+    await callback.message.edit_text('Введите данные услуги. Бот проведёт вас по шагам.')
+    await callback.answer()
+
+
+@router.callback_query(lambda c: c.data == 'admin:service:edit')
+async def cb_admin_service_edit(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    if not is_admin(user_id):
+        await callback.answer('Доступ запрещён', show_alert=True)
+        return
+    
+    services = await list_services()
+    if not services:
+        await callback.answer('Нет услуг для редактирования', show_alert=True)
+        return
+    
+    text, kb = await _build_services_page_admin(services, 0)
+    await callback.message.edit_text(f'Выберите услугу для редактирования:\n\n{text}', reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('admin:services:page:'))
+async def cb_admin_services_page(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    if not is_admin(user_id):
+        await callback.answer('Доступ запрещён', show_alert=True)
+        return
+    
+    try:
+        page = int(callback.data.split(':')[-1])
+    except Exception:
+        await callback.answer('Неверная страница', show_alert=True)
+        return
+    
+    services = await list_services()
+    text, kb = await _build_services_page_admin(services, page)
+    await callback.message.edit_text(f'Выберите услугу для редактирования:\n\n{text}', reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(lambda c: c.data == 'admin:service:delete')
+async def cb_admin_service_delete(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    if not is_admin(user_id):
+        await callback.answer('Доступ запрещён', show_alert=True)
+        return
+    
+    services = await list_services()
+    if not services:
+        await callback.answer('Нет услуг для удаления', show_alert=True)
+        return
+    
+    # Show first 5 services with delete options
+    kb_rows = []
+    text_lines = ['Выберите услугу для удаления:\n']
+    page_size = 5
+    
+    for i, s in enumerate(services[:page_size]):
+        text_lines.append(f"{s['name']} — {s['price']}€")
+        kb_rows.append([InlineKeyboardButton(text=f'{s["name"]}', callback_data=f'admin:service:delete:choose:{s["id"]}')])
+    
+    if len(services) > page_size:
+        kb_rows.append([InlineKeyboardButton(text='➡️ Далее', callback_data='admin:services:delete:page:1')])
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+    await callback.message.edit_text('\n'.join(text_lines), reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('admin:services:delete:page:'))
+async def cb_admin_services_delete_page(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    if not is_admin(user_id):
+        await callback.answer('Доступ запрещён', show_alert=True)
+        return
+    
+    try:
+        page = int(callback.data.split(':')[-1])
+    except Exception:
+        await callback.answer('Неверная страница', show_alert=True)
+        return
+    
+    services = await list_services()
+    page_size = 5
+    start = page * page_size
+    end = start + page_size
+    page_items = services[start:end]
+    
+    kb_rows = []
+    text_lines = [f'Выберите услугу для удаления (стр. {page + 1}):\n']
+    
+    for s in page_items:
+        text_lines.append(f"{s['name']} — {s['price']}€")
+        kb_rows.append([InlineKeyboardButton(text=f'{s["name"]}', callback_data=f'admin:service:delete:choose:{s["id"]}')])
+    
+    nav_row = []
+    if page > 0:
+        nav_row.append(InlineKeyboardButton(text='⬅️ Назад', callback_data=f'admin:services:delete:page:{page-1}'))
+    if end < len(services):
+        nav_row.append(InlineKeyboardButton(text='➡️ Далее', callback_data=f'admin:services:delete:page:{page+1}'))
+    if nav_row:
+        kb_rows.append(nav_row)
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+    await callback.message.edit_text('\n'.join(text_lines), reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('admin:service:delete:choose:'))
+async def cb_admin_service_delete_choose(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    if not is_admin(user_id):
+        await callback.answer('Доступ запрещён', show_alert=True)
+        return
+    
+    try:
+        sid = int(callback.data.split(':')[-1])
+    except Exception:
+        await callback.answer('Неверный id', show_alert=True)
+        return
+    
+    service = await get_service(sid)
+    if not service:
+        await callback.answer('Услуга не найдена', show_alert=True)
+        return
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text='✅ Да', callback_data=f'admin:service:delete:confirm:{sid}'),
+        InlineKeyboardButton(text='❌ Нет', callback_data='admin:service:delete:cancel')
+    ]])
+    
+    await callback.message.edit_text(
+        f'Удалить услугу: {service["name"]}?',
+        reply_markup=kb
+    )
+    await callback.answer()
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('admin:service:delete:confirm:'))
+async def cb_admin_service_delete_confirm(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    if not is_admin(user_id):
+        await callback.answer('Доступ запрещён', show_alert=True)
+        return
+    
+    try:
+        sid = int(callback.data.split(':')[-1])
+    except Exception:
+        await callback.answer('Неверный id', show_alert=True)
+        return
+    
+    service = await get_service(sid)
+    service_name = service['name'] if service else 'услуга'
+    
+    await delete_service(sid)
+    await callback.message.edit_text(f'✅ Услуга "{service_name}" удалена')
+    await callback.answer('Удалено')
+
+
+@router.callback_query(lambda c: c.data == 'admin:service:delete:cancel')
+async def cb_admin_service_delete_cancel(callback: CallbackQuery):
+    await callback.message.edit_text('❌ Удаление отменено')
+    await callback.answer()
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('admin:service:edit:choose:'))
+async def cb_admin_service_edit_choose(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    if not is_admin(user_id):
+        await callback.answer('Доступ запрещён', show_alert=True)
+        return
+    
+    try:
+        sid = int(callback.data.split(':')[-1])
+    except Exception:
+        await callback.answer('Неверный id', show_alert=True)
+        return
+    
+    s = await get_service(sid)
+    if not s:
+        await callback.answer('Услуга не найдена', show_alert=True)
+        return
+    
+    STAGED_EDITS[user_id] = {'type': 'service', 'id': sid, 'step': 'name', 'data': {'name': s['name'], 'description': s['description'], 'price': s['price'], 'duration_minutes': s['duration_minutes']}}
+    await callback.message.edit_text(f"Введите новое название услуги (текущее: {s['name']})")
+    await callback.answer()
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith('confirm_delete_service:'))

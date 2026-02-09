@@ -17,17 +17,29 @@ async def cmd_start(message: Message):
 
 @router.message(lambda message: message.text and '💇' in message.text)
 async def show_services(message: Message):
+    from app.repo import average_rating_for_service
     services = await list_services()
     if not services:
         await message.answer('😔 Пока нет доступных услуг. Администратор скоро добавит. Попробуйте позже!')
         return
+    
+    # Pagination: show first 5 services
+    PAGE_SIZE = 5
+    page_items = services[:PAGE_SIZE]
+    
     rows = []
-    for s in services:
+    for s in page_items:
         avg, cnt = await average_rating_for_service(s['id'])
         rating_str = format_rating(avg, cnt)
-        btn_text = f"{s['name']} — {s['price']}"
+        btn_text = f"{s['name']} — {s['price']}€"
+        if rating_str:
+            btn_text += f" {rating_str}"
         rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"book:service:{s['id']}")])
-        # send individual message per service with rating (keeps existing behavior similar to /services)
+    
+    # Add pagination buttons if needed
+    if len(services) > PAGE_SIZE:
+        rows.append([InlineKeyboardButton(text='➡️ Далее', callback_data='services:page:1')])
+    
     kb = InlineKeyboardMarkup(inline_keyboard=rows)
     await message.answer('💇 Выберите услугу для записи:', reply_markup=kb)
 
