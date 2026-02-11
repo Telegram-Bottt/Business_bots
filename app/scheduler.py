@@ -126,11 +126,21 @@ async def generate_slots(master_id: int, date_s: str, service_duration: int, buf
             b_dur = b['duration'] if b['duration'] else service_duration
             booked_intervals.append((b_start, b_start + b_dur))
 
+        # Filter out past slots if date is today
+        today = datetime.now().date().isoformat()
+        now_min = hhmm_to_minutes(datetime.now().strftime('%H:%M'))
+        
         slots = []
         cur_start = start_min
         while cur_start + duration <= end_min:
             cand_start = cur_start
             cand_end = cur_start + duration
+            
+            # Skip past slots if booking is for today
+            if date_s == today and cand_end <= now_min:
+                cur_start += step
+                continue
+            
             overlap = False
             for bi_start, bi_end in booked_intervals:
                 if not (cand_end <= bi_start or cand_start >= bi_end):

@@ -1,9 +1,22 @@
 # 🚀 Business Bot — Telegram Booking & Review System
 
-**Status**: ✅ MVP Stage 4 — Ready for Demo  
-**Version**: 1.0.0  
-**Test Results**: 60/60 ✅  
-**Last Updated**: 2026-01-30  
+**Status**: ✅ MVP Stage 4 — Production-Ready  
+**Version**: 1.0.1 — Critical Bugfixes  
+**Test Results**: 63/63 ✅  
+**Last Updated**: 2026-02-11  
+
+---
+
+## 🔧 Recent Critical Fixes (v1.0.1)
+
+✅ **Fixed**: Time storage bug (was saving 00 instead of 11:00)  
+✅ **Fixed**: Past time slots showing in calendar  
+✅ **Fixed**: Auto-complete happening instantly  
+✅ **Fixed**: Reminders sent even for past bookings  
+✅ **Fixed**: User display showing ID instead of names  
+✅ **Added**: Service selection when creating master  
+
+→ See [CRITICAL_FIXES.md](CRITICAL_FIXES.md) for details
 
 ---
 
@@ -18,6 +31,7 @@
 - 📚 **Find all documentation** → [DOCUMENTATION_INDEX.md](DOCUMENTATION_INDEX.md)
 - 📋 **Check implementation details** → [STAGE4_IMPLEMENTATION.md](STAGE4_IMPLEMENTATION.md)
 - 📝 **View changelog** → [CHANGELOG.md](CHANGELOG.md)
+- 🐛 **See critical bug fixes** → [CRITICAL_FIXES.md](CRITICAL_FIXES.md)
 
 ---
 
@@ -28,7 +42,7 @@ A **Telegram bot** that helps businesses (hair salons, beauty, services) manage:
 - ✅ **Scheduling** — Automatic slot generation (respects working hours)
 - ✅ **Automation** — Auto-complete, reminders (24h + 1h), reviews
 - ✅ **Ratings** — Average rating display for masters and services
-- ✅ **Admin Panel** — Text commands for managing masters/services/bookings
+- ✅ **Admin Panel** — Inline buttons + text commands for managing masters/services/bookings
 
 ---
 
@@ -43,31 +57,36 @@ pip install -r requirements.txt
 echo "BOT_TOKEN=your_token" > .env
 echo "ADMIN_IDS=your_telegram_id" >> .env
 
+# Create database
+python scripts/create_db.py
+
 # Run
 python app/main.py
 ```
 
 ### 2. Test in Telegram
-- Open your bot
-- Type `/start`
-- Click 💇 **Services** to see demo
+- Open your bot → `/start`
+- Click 💇 **Services** to browse available bookings
+- Click service name → select master/time/date to book
+- Admin clicks 🏠 **Админ-меню** to enter admin panel
 
-### 3. Admin Setup
+### 3. Admin Setup (easiest via button UI)
+- In admin panel, click "➕ Добавить мастера"
+- Enter master name, bio, contact
+- Choose services they provide
+- Select working hours after creation
+
+Legacy command format:
 ```bash
-# Add a master
 /add_master John Barber|Expert|+1234567890
-
-# Add a service
 /add_service Haircut|25.0|30|Professional haircut
-
-# Set schedule (weekday 0-6, Mon-Sun)
 /set_schedule 1|0|09:00|18:00|60
 ```
 
-### 4. Verify
+### 4. Verify Everything
 ```bash
 python -m pytest tests/ -q
-# Expected: 60 passed ✅
+# Expected: 63 passed ✅
 ```
 
 ---
@@ -75,23 +94,28 @@ python -m pytest tests/ -q
 ## ✨ Key Features
 
 ### For Users 👤
-- **Simple booking** → 2-minute appointment booking flow
-- **Ratings visible** ⭐ → See master/service average ratings
-- **Auto reminders** 🔔 → Get reminders 24h and 1h before visit
-- **Review requests** → Automatic 1-5 star rating prompt after visit
-- **Fallback option** → Can request manual booking if no slots
+- **Simple 2-minute booking** → Select service → Master → Date → Time → Confirm
+- **Live ratings** ⭐ → See average ratings for each master/service
+- **Smart reminders** 🔔 → Auto-reminders 24h and 1h before visit
+- **Auto reviews** → Smart prompts to rate after visit completion
+- **No slots?** → Request manual booking via dedicated interface
+- **Pagination** → Browse services with next/previous buttons
 
 ### For Admins 👨‍💼
-- **Easy setup** → Add masters, services, and schedules via commands
-- **Booking management** → View all appointments, mark as completed
-- **Rating analytics** → See average ratings and reviews
-- **Safety** → Double-booking prevention, slot management
+- **Inline admin panel** → ➕ Add master, 🛠️ Manage services, ➖️ Delete masters
+- **Smart service selection** → Select services when creating master (with pagination)
+- **Booking management** → View all appointments, mark completed, send reviews
+- **Time corrections** → Fixed time parsing (now correctly stores 11:00 instead of 00)
+- **Calendar filtering** → Past time slots automatically hidden
+- **Analytics** → See ratings, reviews, booking history
 
 ### For Developers 👨‍💻
-- **Clean architecture** → Handlers, repo (SQL), scheduling, notifications
-- **Well-tested** → 60 automated tests (unit, integration, E2E)
-- **Documented** → 7 comprehensive guides
-- **Extensible** → Easy to add features (payments, notifications, etc.)
+- **Clean architecture** → Handlers (booking, admin, reviews), Repo (SQL), Scheduler
+- **Comprehensive tests** → 63 automated tests (unit, integration, E2E)
+- **Full documentation** → 8+ guides for setup, architecture, FSM, pagination
+- **Extensible codebase** → Easy to add payments, notifications, etc.
+- **aiogram 3.x** → Modern async Telegram framework
+- **No external deps** → Only Python stdlib + aiogram + aiosqlite
 
 ---
 

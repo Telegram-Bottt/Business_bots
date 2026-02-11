@@ -438,7 +438,71 @@ async def cmd_delete_master(message: Message):
     await message.answer(f'Вы уверены, что хотите удалить мастера {mid}?', reply_markup=kb)
 
 
-@router.callback_query(lambda c: c.data and c.data.startswith('confirm_delete_master:'))
+@router.callback_query(lambda c: c.data and c.data.startswith('admin:master:add:service:'))
+async def cb_master_add_select_service(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    if not is_admin(user_id):
+        await callback.answer('Доступ запрещён', show_alert=True)
+        return
+    
+    try:
+        service_id = int(callback.data.split(':')[-1])
+    except Exception:
+        await callback.answer('Неверный ID', show_alert=True)
+        return
+    
+    if user_id not in STAGED_EDITS:
+        await callback.answer('Сессия истекла', show_alert=True)
+        return
+    
+    staged = STAGED_EDITS[user_id]
+    if 'selected_services' not in staged['data']:
+        staged['data']['selected_services'] = []
+    
+    # Toggle service selection
+    if service_id in staged['data']['selected_services']:
+        staged['data']['selected_services'].remove(service_id)
+    else:
+        staged['data']['selected_services'].append(service_id)
+    
+    await callback.answer(f'Услуга добавлена', show_alert=False)
+
+
+@router.callback_query(lambda c: c.data == 'admin:master:add:services:done' or c.data.startswith('admin:master:add:confirm:'))
+async def cb_master_add_confirm(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    if not is_admin(user_id):
+        await callback.answer('Доступ запрещён', show_alert=True)
+        return
+    
+    if user_id not in STAGED_EDITS:
+        await callback.answer('Сессия истекла', show_alert=True)
+        return
+    
+    staged = STAGED_EDITS.pop(user_id, None)
+    if not staged:
+        await callback.answer('Ошибка сессии', show_alert=True)
+        return
+    
+    d = staged['data']
+    try:
+        mid = await create_master(d.get('name'), d.get('bio') or '', d.get('contact') or '')
+        services_text = ''
+        if d.get('selected_services'):
+            services_text = f' (услуг: {len(d["selected_services"])})'
+        await callback.message.edit_text(f'✅ Мастер {d.get("name")} создан{services_text}')
+    except Exception as e:
+        await callback.message.edit_text('❌ Ошибка при создании мастера: ' + str(e))
+    
+    await callback.answer()
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith('admin:master:add:cancel:'))
+async def cb_master_add_cancel(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    STAGED_EDITS.pop(user_id, None)
+    await callback.message.edit_text('❌ Создание отменено')
+    await callback.answer()
 async def cb_confirm_delete_master(callback: CallbackQuery):
     user_id = callback.from_user.id
     if not is_admin(user_id):
@@ -906,14 +970,30 @@ async def handle_staged_edit(message: Message):
                     await message.answer(f'Контакт слишком длинный (макс {MAX_CONTACT_LEN} символов), попробуйте ещё раз')
                     return
                 staged['data']['contact'] = text
-            # create master
-            d = staged['data']
-            try:
-                mid = await create_master(d.get('name'), d.get('bio') or '', d.get('contact') or '')
-                await message.answer(f'Мастер добавлен с id={mid}')
-            except Exception as e:
-                await message.answer('Ошибка при добавлении мастера: ' + str(e))
-            STAGED_EDITS.pop(user_id, None)
+            
+            # Move to service selection step
+            services = await list_services()
+            if services:
+                staged['step'] = 'services'
+                # Show first 5 services
+                kb_rows = []
+                for s in services[:5]:
+                    kb_rows.append([InlineKeyboardButton(text=f'{s["name"]} — {s["price"]}€', callback_data=f'admin:master:add:service:{s["id"]}')])
+                if len(services) > 5:
+                    kb_rows.append([InlineKeyboardButton(text='➡️ Далее', callback_data='admin:master:add:services:page:1')])
+                kb_rows.append([InlineKeyboardButton(text='✅ Готово', callback_data='admin:master:add:services:done')])
+                kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+                await message.answer('Выберите услуги для мастера (можно несколько или пропустить):', reply_markup=kb)
+            else:
+                # No services, skip to confirmation
+                staged['step'] = 'confirm'
+                d = staged['data']
+                summary = f"Подтвердите данные мастера:\nИмя: {d.get('name')}\nBio: {d.get('bio')}\nКонтакт: {d.get('contact')}"
+                kb = InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton(text='✅ Создать', callback_data=f'admin:master:add:confirm:{message.from_user.id}'),
+                    InlineKeyboardButton(text='❌ Отменить', callback_data=f'admin:master:add:cancel:{message.from_user.id}')
+                ]])
+                await message.answer(summary, reply_markup=kb)
             return
     elif t == 'service':
         if step == 'name':

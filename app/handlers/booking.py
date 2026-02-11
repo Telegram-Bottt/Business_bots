@@ -532,7 +532,9 @@ async def process_date(message: Message, state: FSMContext):
 
 @router.callback_query(lambda q: q.data and q.data.startswith('book:time:'))
 async def cb_select_time(query: CallbackQuery, state: FSMContext):
-    time_s = query.data.split(':')[-1]
+    # Parse time: book:time:11:00 → '11:00'
+    parts = query.data.split(':')
+    time_s = ':'.join(parts[-2:])  # Join last 2 parts (hour and minute)
     await state.update_data(time=time_s)
     await query.message.answer('👤 Введите ваше имя:')
     await _set_state(state, BookingStates.NAME)
@@ -565,9 +567,32 @@ async def process_phone(message: Message, state: FSMContext):
         return
     await state.update_data(phone=phone)
     data = await state.get_data()
-    text = f"Подтвердите запись:\nУслуга ID: {data['service_id']}\nМастер ID: {data['master_id']}\nДата: {data['date']}\nВремя: {data['time']}\nИмя: {data['name']}\nТелефон: {data['phone']}"
+    
+    # Get service and master names
+    service = await get_service(data['service_id'])
+    service_name = service['name'] if service else 'Услуга'
+    
+    master_id = data['master_id'] if data['master_id'] != 0 else None
+    master_name = 'без выбора'
+    if master_id:
+        master = await get_master(master_id)
+        master_name = master['name'] if master else 'Мастер'
+    
+    # Build confirmation message with names, not IDs
+    text = (
+        f"Подтвердите запись:\n"
+        f"Услуга: {service_name}\n"
+        f"Мастер: {master_name}\n"
+        f"Дата: {data['date']}\n"
+        f"Время: {data['time']}\n"
+        f"Имя: {data['name']}\n"
+        f"Телефон: {data['phone']}"
+    )
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='Подтвердить', callback_data='book:confirm'), InlineKeyboardButton(text='Отмена', callback_data='book:cancel')]])
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text='✅ Подтвердить', callback_data='book:confirm'),
+        InlineKeyboardButton(text='❌ Отмена', callback_data='book:cancel')
+    ]])
     await message.answer(text, reply_markup=kb)
     await _set_state(state, BookingStates.CONFIRM)
 

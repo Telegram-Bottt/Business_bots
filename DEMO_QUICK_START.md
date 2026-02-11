@@ -1,7 +1,20 @@
 # 🚀 MVP Stage 4 — Quick Start & Demo Checklist
 
-**Business Bot MVP — Ready for Client Presentation**  
-Date: 2026-01-30 | Status: ✅ Production Ready  
+**Business Bot MVP — Production Ready (v1.0.1 with critical fixes)**  
+Date: 2026-02-11 | Status: ✅ All 63 Tests Pass  
+
+---
+
+## 🔧 What's Fixed in v1.0.1
+
+| Bug | Status |
+|-----|--------|
+| Time saving (11:00 → 00) | ✅ Fixed |
+| Past slots in calendar | ✅ Fixed |
+| Auto-complete instant | ✅ Fixed |
+| Wrong reminder timing | ✅ Fixed |
+| ID shown instead of names | ✅ Fixed |
+| No service selection for master | ✅ Added |
 
 ---
 
@@ -9,10 +22,12 @@ Date: 2026-01-30 | Status: ✅ Production Ready
 
 A **working booking bot** that demonstrates:
 - ✅ Full user journey: `/start` → select service → choose master → pick time → confirm → get reminder → leave review
-- ✅ Auto-completion of appointments (with grace period)
-- ✅ Automatic reminders (24h and 1h before appointment)
+- ✅ Auto-completion of appointments (with grace period — default 15 min after service ends)
+- ✅ Automatic reminders (24h before and 1h before appointment — only for future times)
 - ✅ Rating system (visible for masters and services)
-- ✅ Admin panel (text commands only, no UI)
+- ✅ Admin panel (inline buttons + text commands)
+- ✅ Correct time storage and display (HH:MM format)
+- ✅ Smart calendar (past slots hidden for today)
 
 ---
 
@@ -22,63 +37,82 @@ A **working booking bot** that demonstrates:
 
 **Admin ID**: Your Telegram ID (set in `.env` as `ADMIN_IDS=your_id`)
 
-Send these commands to the bot:
-```
+**Using Inline Buttons (Recommended):**
+1. Send `/admin` or click 🏠 **Админ-меню**
+2. Click ➕ **Добавить мастера**
+3. Follow prompts (name → bio → contact → select services)
+4. Click 🛠️ **Настроить услуги** → ➕ **Добавить услугу**
+5. Enter service details (name, price, duration, description)
+
+**Using Legacy Commands (Alternative):**
+```bash
 /add_master John Barber|Expert barber with 10 years experience|+1234567890
 /add_master Sarah Nails|Nail specialist|+0987654321
 
 /add_service Haircut|25.0|30|Professional men haircut
 /add_service Manicure|30.0|45|Classic nail care
 
+# Set working schedule (weekday 0-6: Mon-Sun)
 /set_schedule 1|0|09:00|18:00|60
 /set_schedule 1|1|09:00|18:00|60
 /set_schedule 2|0|10:00|17:00|45
-
-/list_bookings
 ```
-
-(Weekday: 0=Mon, 1=Tue, etc.)
 
 ### Part 2: User Books Appointment — ~3 minutes
 
-1. Click `/start`
-2. Press 💇 **Services**
-3. Choose **Haircut** (should show master rating if reviews exist)
-4. Choose **John Barber** (shows ⭐ rating)
-5. Type date: `2026-02-05` (tomorrow or next working day)
-6. Select time: `10:00`
-7. Enter name: `Client Name`
-8. Enter phone: `+123456789`
-9. Click **Confirm**
+1. Click `/start` → 💇 **Услуги** (Services)
+2. Choose **Haircut** (shows master ratings if available)
+3. Choose **John Barber** (shows ⭐ average rating)
+4. Type date: `2026-02-12` (tomorrow)
+5. Select time: `11:00` ← **(Correctly saved now! Was broken before)**
+6. Enter name: `Client Name`
+7. Enter phone: `+123456789`
+8. Review the booking:
+   ```
+   Услуга: Haircut
+   Мастер: John Barber
+   Дата: 2026-02-12
+   Время: 11:00
+   ```
+9. Click ✅ **Подтвердить** (Confirm)
 
-**Expected**: "✅ Appointment confirmed!" + scheduling starts.
+**Expected**: "✅ Запись подтверждена!" + system starts automation.
 
 ### Part 3: Show Automation — ~2 minutes
 
 Check console where bot is running:
 ```
-auto_complete: booking_id=1, status_change=scheduled->completed
-reminder_sent: booking_id=1 kind=24h
-reminder_sent: booking_id=1 kind=1h
+# Scheduling happens immediately
+auto_complete_scheduled: booking_id=1, scheduled_for=2026-02-12T11:45:00
+reminder_scheduled: booking_id=1, kind=24h, scheduled_for=2026-02-11T11:00:00
+reminder_scheduled: booking_id=1, kind=1h, scheduled_for=2026-02-12T10:00:00
 ```
 
-The system will:
-- 📨 Send 24h reminder tomorrow
-- 📨 Send 1h reminder before appointment
-- ✅ Auto-mark as completed (after time expires + grace period)
-- ⭐ Auto-request review from user
+Timeline:
+- **Now**: Booking created ✅
+- **2026-02-11 11:00**: 24h reminder sent ("Запись завтра в 11:00")
+- **2026-02-12 10:00**: 1h reminder sent ("Запись сегодня в 11:00")
+- **2026-02-12 11:45**: Auto-marked completed (time + duration + grace period)
+- **After completion**: Auto-review request sent to user
 
 ### Part 4: Admin Views — ~3 minutes
 
-```
+```bash
+# View all bookings
+/list_bookings
+
+# View bookings in date range
+/list_bookings 2026-02-10|2026-02-15
+
+# Get master average rating
 /avg_rating master|1
-→ "Master 1 — average rating: 5.0 (1 reviews)"
+→ "Мастер: John Barber — ⭐ 5.0 (1 review)"
 
+# View all reviews
 /list_reviews
-→ Shows all reviews with ratings
 
+# Manually complete booking + send review request
 /complete_booking 1
-→ Manually mark done + send review request
 ```
 
 ---
@@ -88,7 +122,7 @@ The system will:
 ### Prerequisites
 - Python 3.11+
 - Telegram Bot Token (from @BotFather)
-- Your Telegram User ID (send `/start` to @getmyid_bot)
+- Your Telegram User ID (send message to @getmyid_bot)
 
 ### Step 1: Clone & Install
 ```bash

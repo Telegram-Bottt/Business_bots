@@ -28,8 +28,16 @@ def schedule_auto_complete(booking_id, date_s, time_s, duration_min):
         minutes=duration_min + GRACE_PERIOD_MINUTES
     )
     delay = (dt - datetime.now()).total_seconds()
-    if delay < 0:
-        delay = 0
+    
+    # Only schedule if the scheduled time is in the future
+    if delay <= 0:
+        logger.info(
+            f"auto_complete_skip: booking_id={booking_id}, "
+            f"reason=scheduled_time_in_past, "
+            f"scheduled={dt.isoformat()}, now={datetime.now().isoformat()}"
+        )
+        return
+    
     # NOTE: schedule_auto_complete creates a background task using
     # `asyncio.create_task`. Ensure the bot runs inside an asyncio
     # event loop (as in `app/main.py`). If called outside a running
@@ -38,6 +46,10 @@ def schedule_auto_complete(booking_id, date_s, time_s, duration_min):
     # runtime observation during testing; logic kept as-is for MVP.
     task = asyncio.create_task(_auto_complete(booking_id, delay))
     _scheduled_tasks[booking_id] = task
+    logger.info(
+        f"auto_complete_scheduled: booking_id={booking_id}, "
+        f"scheduled_for={dt.isoformat()}, delay_seconds={delay}"
+    )
 
 
 def cancel_auto_complete(booking_id):

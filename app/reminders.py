@@ -24,20 +24,35 @@ def compute_reminder_times(date_s: str, time_s: str):
 
 
 def schedule_reminders(booking_id: int, date_s: str, time_s: str):
-    """Schedule reminder tasks for a booking (24h and 1h before)."""
+    """Schedule reminder tasks for a booking (24h and 1h before).
+    
+    Only schedules reminders if the time is in the future.
+    """
     times = compute_reminder_times(date_s, time_s)
     now = datetime.now()
+    
     for kind in ('24h', '1h'):
         run_at = times[kind]
         delay = (run_at - now).total_seconds()
-        if delay < 0:
-            delay = 0
+        
+        # Skip reminders that are already in the past
+        if delay <= 0:
+            logger.info(
+                f"reminder_skip: booking_id={booking_id}, kind={kind}, "
+                f"reason=already_in_past, scheduled={run_at.isoformat()}, now={now.isoformat()}"
+            )
+            continue
+        
         # NOTE: schedule_reminders uses background tasks created via
         # `asyncio.create_task`. Ensure bot runs within an asyncio loop.
         # If scheduling occurs outside a running loop it may raise or
         # produce 'coroutine was never awaited' warnings during tests.
         task = asyncio.create_task(_send_reminder(booking_id, kind, delay))
         _scheduled_reminders.setdefault(booking_id, {})[kind] = task
+        logger.info(
+            f"reminder_scheduled: booking_id={booking_id}, kind={kind}, "
+            f"scheduled_for={run_at.isoformat()}, delay_seconds={delay}"
+        )
 
 
 def cancel_reminders(booking_id: int):
@@ -71,11 +86,15 @@ async def _send_reminder(booking_id: int, kind: str, delay: float):
     if not tg:
         logger.info(f"reminder_skip: booking_id={booking_id} user_no_tg")
         return
-    # Compose friendly message
+    
+    # Compose friendly message based on reminder kind
+    # 24h reminder: booking is tomorrow
+    # 1h reminder: booking is today
     if kind == '24h':
         text = f"Напоминаем: у вас запись завтра {booking['date']} в {booking['time']}. Ждём вас!"
-    else:
-        text = f"Напоминание: сегодня у вас запись в {booking['time']}. До встречи!"
+    else:  # kind == '1h'
+        text = f"Напоминание: у вас запись сегодня в {booking['time']}. До встречи!"
+    
     try:
         await notify_user(tg, text)
         await set_reminder_sent(booking_id, kind)

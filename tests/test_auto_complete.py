@@ -217,8 +217,10 @@ class TestTaskScheduling:
         mock_create_task.return_value = mock_task
         
         bid = 123
-        # Schedule a task
-        schedule_auto_complete(bid, '2026-01-20', '14:00', 30)
+        # Schedule a task with FUTURE date to ensure it's scheduled
+        from datetime import datetime, timedelta
+        future_date = (datetime.now() + timedelta(days=2)).date().isoformat()
+        schedule_auto_complete(bid, future_date, '14:00', 30)
         
         # Verify task was created
         assert mock_create_task.called
