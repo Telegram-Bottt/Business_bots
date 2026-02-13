@@ -3,7 +3,7 @@ from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.filters import StateFilter
-from app.repo import get_or_create_user, create_booking, list_masters, SlotTaken, DoubleBooking, get_service, average_rating_for_master
+from app.repo import get_master, get_or_create_user, create_booking, list_masters, SlotTaken, DoubleBooking, get_service, average_rating_for_master
 from app.utils import valid_phone, format_rating
 
 # Для автозавершения

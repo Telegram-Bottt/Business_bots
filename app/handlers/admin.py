@@ -268,9 +268,9 @@ async def cmd_list_bookings(message: Message):
     from app.repo import get_user_by_id, get_service, get_master
     text = ''
     for r in rows[:200]:
-        user = await get_user_by_id(r['user_id']) if r.get('user_id') else None
-        service = await get_service(r['service_id']) if r.get('service_id') else None
-        master = await get_master(r['master_id']) if r.get('master_id') else None
+        user = await get_user_by_id(r['user_id']) if r['user_id'] else None
+        service = await get_service(r['service_id']) if r['service_id'] else None
+        master = await get_master(r['master_id']) if r['master_id'] else None
         
         user_name = user['name'] if user else "неизвестный"
         user_phone = user['phone'] if user else ""

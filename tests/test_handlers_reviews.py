@@ -67,7 +67,7 @@ def test_leave_review_and_admin_list(temp_db):
         # admin lists reviews
         a = FakeMessage(ADMIN_ID, ADMIN_ID, args='')
         await rev_handlers.cmd_list_reviews(a)
-        assert 'rating' in a.replies[-1]['text'].lower() or 'рейтинг' in a.replies[-1]['text'].lower()
+        assert 'звёзд' in a.replies[-1]['text'].lower() or '⭐' in a.replies[-1]['text']
     asyncio.run(_run())
 
 

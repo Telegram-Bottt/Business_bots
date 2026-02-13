@@ -192,7 +192,15 @@ async def r_review_text(message, state):
         return
     rid = await create_review(user_db['id'], b['service_id'], b['master_id'], rating, text or None)
     try:
-        await notify_mod.notify_admins(f"Новый отзыв: id={rid} рейтинг={rating} мастер={b['master_id']} услуга={b['service_id']} текст={text or ''}")
+        from app.repo import get_master, get_service
+        master = await get_master(b['master_id']) if b['master_id'] else None
+        service = await get_service(b['service_id']) if b['service_id'] else None
+        master_name = master['name'] if master else "неизвестный"
+        service_name = service['name'] if service else "неизвестная"
+        msg = f"⭐ Новый отзыв\nРейтинг: {rating} звёзд\nМастер: {master_name}\nУслуга: {service_name}\nКомментарий: {text or '(без текста)'}\nID отзыва: {rid}"
+        await notify_mod.notify_admins(msg)
+    except Exception:
+        pass
     except Exception:
         pass
     await message.answer('Спасибо за подробный отзыв! ⭐ Мы учтём ваши пожелания.')
@@ -217,9 +225,31 @@ async def cmd_list_reviews(message: Message):
     if not rows:
         await message.answer('Отзывов нет')
         return
+    from app.repo import get_user_by_id, get_service, get_master
     text = ''
-    for r in rows:
-        text += f"ID:{r['id']} user:{r['user_tg_id'] or 'unknown'} rating:{r['rating']} master:{r['master_id'] or ''} service:{r['service_id'] or ''} {r['text'] or ''}\n"
+    for r in rows[:200]:
+        # Get user name by tg_id if available
+        user_name = 'неизвестный'
+        if r['user_id']:
+            user = await get_user_by_id(r['user_id'])
+            if user:
+                user_name = user['name']
+        
+        service = await get_service(r['service_id']) if r['service_id'] else None
+        master = await get_master(r['master_id']) if r['master_id'] else None
+        
+        service_name = service['name'] if service else 'неизвестная'
+        master_name = master['name'] if master else 'не указан'
+        
+        rating_stars = '⭐' * r['rating']
+        text += f"\n{rating_stars} {r['rating']} звёзд\n"
+        text += f"Автор: {user_name}\n"
+        text += f"Мастер: {master_name}\n"
+        text += f"Услуга: {service_name}\n"
+        if r['text']:
+            text += f"Комментарий: {r['text']}\n"
+        text += f"ID: {r['id']}\n"
+        text += "─" * 40
     await message.answer(text)
 
 @router.message(Command('avg_rating'))
